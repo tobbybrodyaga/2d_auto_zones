@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>LiraSlabZones</Name>
+    <Assembly>C:\Users\Filippov_G\Pictures\Test\Шаблон\src\LiraSlabZones.Revit2023\bin\x64\Debug\net48\LiraSlabZones.Revit2023.dll</Assembly>
+    <AddInId>B7E6C2A1-4F3D-4A9E-9C11-8D2A6F0E5B21</AddInId>
+    <FullClassName>LiraSlabZones.Revit2023.App</FullClassName>
+    <VendorId>SUM</VendorId>
+    <VendorDescription>LIRA → Revit: зоны доп.армирования плит</VendorDescription>
+  </AddIn>
+</RevitAddIns>

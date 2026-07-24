@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <AppendPlatformToOutputPath>true</AppendPlatformToOutputPath>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>LiraSlabZones.PreviewHost</RootNamespace>
+    <AssemblyName>LiraSlabZones.PreviewHost</AssemblyName>
+    <StartupObject>LiraSlabZones.PreviewHost.App</StartupObject>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\LiraSlabZones.Core\LiraSlabZones.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\LiraSlabZones.Revit2023\UI\ZonePreviewWindow.xaml.cs" Link="UI\ZonePreviewWindow.xaml.cs" />
+    <Compile Include="..\LiraSlabZones.Revit2023\UI\PreviewViewport.cs" Link="UI\PreviewViewport.cs" />
+    <Page Include="..\LiraSlabZones.Revit2023\UI\ZonePreviewWindow.xaml" Link="UI\ZonePreviewWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+  </ItemGroup>
+</Project>
