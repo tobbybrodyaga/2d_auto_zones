@@ -10,8 +10,9 @@ namespace LiraSlabZones.Exporter
         {
             try
             {
-                var root = FindRoot();
-                var configPath = Path.Combine(root, "config", "settings.json");
+                var root = SolutionPaths.FindRoot();
+                var configPath = AppConfig.FindDefaultSettingsPath()
+                                 ?? Path.Combine(root, AppConfig.DefaultFileName);
                 var outputPath = Path.Combine(root, "output", "slab_zones.json");
 
                 string? lirPath = null;
@@ -30,20 +31,21 @@ namespace LiraSlabZones.Exporter
                     }
                 }
 
-                if (!File.Exists(configPath))
-                {
-                    AnalysisSettingsStore.Save(configPath, new AnalysisSettings());
-                    Console.WriteLine("Создан конфиг по умолчанию: " + configPath);
-                }
+                AnalysisSettings settings;
+                if (!string.IsNullOrWhiteSpace(configPath) && File.Exists(configPath))
+                    settings = AnalysisSettingsStore.LoadOrDefault(configPath);
+                else
+                    settings = AppConfig.LoadEffectiveSettings();
 
-                var settings = AnalysisSettingsStore.LoadOrDefault(configPath);
                 Console.WriteLine("AsMain = {0} см2/м, режим = {1}", settings.AsMainCm2PerM, settings.PlacementMode);
+                Console.WriteLine("FamilyStraight = {0}", settings.FamilyStraight);
                 Console.WriteLine(lirPath == null
                     ? "Чтение активной схемы из запущенной ЛИРА-САПР..."
                     : "Открытие: " + lirPath);
 
                 var analyzer = new SlabZoneAnalyzer();
                 var result = analyzer.Analyze(lirPath, settings);
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
                 SlabZoneAnalyzer.SaveJson(result, outputPath);
 
                 Console.WriteLine("Документ: {0}", result.DocumentName);
@@ -71,21 +73,7 @@ namespace LiraSlabZones.Exporter
             Console.WriteLine("LiraSlabZones.Exporter");
             Console.WriteLine("  --lir <path.lir>   открыть схему (иначе — активный документ ЛИРА)");
             Console.WriteLine("  --out <json>       путь выгрузки зон");
-            Console.WriteLine("  --config <json>    настройки порога AsMain и режима размещения");
-        }
-
-        private static string FindRoot()
-        {
-            var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
-            while (dir != null)
-            {
-                if (Directory.Exists(Path.Combine(dir.FullName, "config")) &&
-                    Directory.Exists(Path.Combine(dir.FullName, "families")))
-                    return dir.FullName;
-                dir = dir.Parent;
-            }
-
-            return Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", ".."));
+            Console.WriteLine("  --config <cfg>     DefaultSettings.cfg / LiraSlabZones.cfg");
         }
     }
 }

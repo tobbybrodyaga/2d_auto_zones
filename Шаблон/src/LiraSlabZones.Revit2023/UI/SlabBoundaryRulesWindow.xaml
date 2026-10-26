@@ -1,0 +1,51 @@
+<Window x:Class="LiraSlabZones.Revit2023.UI.SlabBoundaryRulesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Учесть границу плиты и отверстия"
+        Width="390" Height="290" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        Background="#F4F5F7">
+  <Grid Margin="16">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <TextBlock Text="Параметры плиты" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,14"/>
+    <Grid Grid.Row="1" Margin="0,0,0,8">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="100"/>
+      </Grid.ColumnDefinitions>
+      <TextBlock Text="Толщина плиты, мм" VerticalAlignment="Center"/>
+      <TextBox x:Name="TbThickness" Grid.Column="1" Height="28" VerticalContentAlignment="Center"/>
+    </Grid>
+    <Grid Grid.Row="2" Margin="0,0,0,8">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="100"/>
+      </Grid.ColumnDefinitions>
+      <TextBlock Text="Защитный слой снизу, мм" VerticalAlignment="Center"/>
+      <TextBox x:Name="TbCoverBottom" Grid.Column="1" Height="28" VerticalContentAlignment="Center"/>
+    </Grid>
+    <Grid Grid.Row="3" Margin="0,0,0,8">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="100"/>
+      </Grid.ColumnDefinitions>
+      <TextBlock Text="Защитный слой сверху, мм" VerticalAlignment="Center"/>
+      <TextBox x:Name="TbCoverTop" Grid.Column="1" Height="28" VerticalContentAlignment="Center"/>
+    </Grid>
+    <TextBlock x:Name="TxtValidation" Grid.Row="4" Foreground="#B91C1C"
+               TextWrapping="Wrap" Margin="0,0,0,10"/>
+    <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
+      <Button Content="Применить" IsDefault="True" MinWidth="100" Padding="10,6"
+              Margin="0,0,8,0" Background="#1D4ED8" Foreground="White"
+              BorderThickness="0" Click="BtnApply_Click"/>
+      <Button Content="Отмена" IsCancel="True" MinWidth="80" Padding="10,6"/>
+    </StackPanel>
+  </Grid>
+</Window>

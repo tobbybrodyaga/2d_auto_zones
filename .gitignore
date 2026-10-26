@@ -1,0 +1,8 @@
+
+Шаблон/.ragcode/vector-state.json
+**/bin/
+**/obj/
+**/.cache/
+/.tools/
+/Шаблон/dist/backup/
+/Шаблон/artifacts/

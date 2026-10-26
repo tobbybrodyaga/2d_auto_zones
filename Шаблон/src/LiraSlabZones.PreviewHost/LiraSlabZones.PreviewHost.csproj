@@ -19,7 +19,18 @@
   <ItemGroup>
     <Compile Include="..\LiraSlabZones.Revit2023\UI\ZonePreviewWindow.xaml.cs" Link="UI\ZonePreviewWindow.xaml.cs" />
     <Compile Include="..\LiraSlabZones.Revit2023\UI\PreviewViewport.cs" Link="UI\PreviewViewport.cs" />
+    <Compile Include="..\LiraSlabZones.Revit2023\UI\BoundaryEditorViewport.cs" Link="UI\BoundaryEditorViewport.cs" />
+    <Compile Include="..\LiraSlabZones.Revit2023\UI\BoundaryEditorWindow.xaml.cs" Link="UI\BoundaryEditorWindow.xaml.cs" />
+    <Compile Include="..\LiraSlabZones.Revit2023\UI\SlabBoundaryRulesWindow.xaml.cs" Link="UI\SlabBoundaryRulesWindow.xaml.cs" />
     <Page Include="..\LiraSlabZones.Revit2023\UI\ZonePreviewWindow.xaml" Link="UI\ZonePreviewWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="..\LiraSlabZones.Revit2023\UI\BoundaryEditorWindow.xaml" Link="UI\BoundaryEditorWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="..\LiraSlabZones.Revit2023\UI\SlabBoundaryRulesWindow.xaml" Link="UI\SlabBoundaryRulesWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>

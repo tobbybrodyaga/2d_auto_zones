@@ -13,6 +13,7 @@ namespace LiraSlabZones.Revit2023
     public sealed class OpenZonePreviewCommand : IExternalCommand
     {
         private static ZonePreviewWindow? _window;
+        private static RevitActionQueue? _queue;
 
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
@@ -20,9 +21,13 @@ namespace LiraSlabZones.Revit2023
             {
                 var uiApp = commandData.Application;
                 var uiDoc = uiApp.ActiveUIDocument;
+                var settings = AppConfig.LoadEffectiveSettings();
 
                 if (_window != null)
                 {
+                    if (uiDoc != null)
+                        _window.SetProjectFamilies(FamilyLoader.ListFamilyNames(uiDoc.Document),
+                            settings.FamilyStraight);
                     _window.Activate();
                     return Result.Succeeded;
                 }
@@ -35,13 +40,17 @@ namespace LiraSlabZones.Revit2023
 
                 if (uiDoc != null)
                 {
-                    _window.SetPlaceCallback(result => PlaceIntoRevit(uiDoc.Document, result));
+                    var doc = uiDoc.Document;
+                    _window.SetProjectFamilies(FamilyLoader.ListFamilyNames(doc), settings.FamilyStraight);
+                    // ExternalEvent создаётся только в контексте Revit API — здесь, а не в обработчике кнопки.
+                    _queue ??= new RevitActionQueue();
+                    _window.SetPlaceCallback(result => _queue.Run(app => PlaceIntoRevit(app, result)));
                 }
 
                 _window.Closed += (_, __) => _window = null;
 
-                // Демо сразу — чтобы UI был наполнен как в SmartRebar
-                _window.LoadResult(DemoSlabFactory.Create());
+                var demo = DemoSlabFactory.Create(settings);
+                _window.LoadResult(demo);
                 _window.Show();
 
                 return Result.Succeeded;
@@ -54,33 +63,34 @@ namespace LiraSlabZones.Revit2023
             }
         }
 
-        private static void PlaceIntoRevit(Document doc, AnalysisResult analysis)
+        private static void PlaceIntoRevit(UIApplication app, AnalysisResult analysis)
         {
-            var root = SolutionPaths.FindRoot();
-            var familyPath = Path.Combine(root, "families", analysis.Settings.FamilyFileName);
-            if (!File.Exists(familyPath))
+            var doc = app.ActiveUIDocument?.Document;
+            if (doc == null) return;
+            AppConfig.SaveUserSettings(analysis.Settings);
+
+            var familyName = analysis.Settings.FamilyStraight;
+            var symbol = FamilyLoader.FindSymbol(doc, familyName);
+            if (symbol == null)
             {
-                var alt = SolutionPaths.FindFamilyOnODrive(analysis.Settings.FamilyFileName);
-                if (alt != null) familyPath = alt;
+                try
+                {
+                    symbol = FamilyLoader.ResolveFromProject(doc, familyName);
+                    analysis.Settings.FamilyStraight = symbol.FamilyName;
+                    AppConfig.SaveUserSettings(analysis.Settings);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
             }
 
-            if (!File.Exists(familyPath))
-                throw new FileNotFoundException("Семейство не найдено", analysis.Settings.FamilyFileName);
-
+            var root = SolutionPaths.FindRoot();
             var outPath = Path.Combine(root, "output", "slab_zones.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
             SlabZoneAnalyzer.SaveJson(analysis, outPath);
 
-            int placed;
-            using (var tx = new Transaction(doc, "LiraSlabZones: зоны из превью"))
-            {
-                tx.Start();
-                var symbol = FamilyLoader.EnsureSymbol(doc, familyPath, analysis.Settings.FamilyName);
-                placed = ZonePlacer.Place(doc, symbol, analysis);
-                tx.Commit();
-            }
-
-            TaskDialog.Show("LiraSlabZones",
-                $"Размещено: {placed} из {analysis.Zones.Count}\nJSON: {outPath}");
+            ZonePlacementService.PlaceWithPrompt(app, symbol, analysis);
         }
     }
 }

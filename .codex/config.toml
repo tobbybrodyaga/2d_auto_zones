@@ -1,0 +1,12 @@
+[mcp_servers.lira_code_search]
+command = "node"
+args = ["C:\\Users\\Filippov_G\\Pictures\\2DSaveliyZones\\2d_auto_zones\\Шаблон\\tools\\code-search-mcp.cjs"]
+
+[mcp_servers.lira_code_search.tools.semantic_search]
+approval_mode = "approve"
+
+[mcp_servers.lira_code_search.tools.read_lines]
+approval_mode = "approve"
+
+[mcp_servers.lira_code_search.tools.index_code]
+approval_mode = "approve"

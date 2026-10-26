@@ -1,0 +1,71 @@
+<Window x:Class="LiraSlabZones.Revit2023.UI.BoundaryEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:LiraSlabZones.Revit2023.UI"
+        Title="Граничные условия и отверстия"
+        Width="1180" Height="780" MinWidth="900" MinHeight="600"
+        WindowStartupLocation="CenterOwner" Background="#F4F5F7">
+  <Grid Margin="10">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <DockPanel Grid.Row="0" Margin="0,0,0,8">
+      <TextBlock Text="Граничные условия и отверстия" FontSize="16" FontWeight="SemiBold"
+                 VerticalAlignment="Center" Margin="0,0,18,0"/>
+      <WrapPanel VerticalAlignment="Center">
+        <Button x:Name="BtnSelect" Content="Выбор" Padding="10,5" Margin="0,0,4,0"
+                Click="BtnSelect_Click" ToolTip="Выбрать отверстие или добавленную границу"/>
+        <Button x:Name="BtnAddOpening" Content="Отверстие +" Padding="10,5" Margin="0,0,4,0"
+                Click="BtnAddOpening_Click" ToolTip="Нарисовать отверстие рамкой с привязкой к сетке КЭ"/>
+        <Button x:Name="BtnMoveOpening" Content="Переместить" Padding="10,5" Margin="0,0,4,0"
+                Click="BtnMoveOpening_Click" ToolTip="Переместить выбранное отверстие с привязкой к КЭ"/>
+        <Button x:Name="BtnResizeOpening" Content="Изменить размер" Padding="10,5" Margin="0,0,4,0"
+                Click="BtnResizeOpening_Click" ToolTip="Перетащить угол отверстия к вершине КЭ"/>
+        <Button x:Name="BtnAddBoundary" Content="Граница +" Padding="10,5" Margin="0,0,4,0"
+                Click="BtnAddBoundary_Click" ToolTip="Добавить ребро КЭ как граничную линию"/>
+        <Button x:Name="BtnAddOuterBoundary" Content="Внешний контур" Padding="10,5" Margin="0,0,4,0"
+                Click="BtnAddOuterBoundary_Click" ToolTip="Выбрать грань КЭ и построить внешний контур связанной области"/>
+        <Button Content="Удалить" Padding="10,5" Margin="0,0,12,0"
+                Click="BtnDelete_Click" ToolTip="Удалить выбранное отверстие или границу"/>
+        <CheckBox x:Name="ChkMesh" Content="Сетка КЭ" IsChecked="True" VerticalAlignment="Center"
+                  Checked="MeshChanged" Unchecked="MeshChanged" Margin="0,0,10,0"/>
+        <Button Content="Вписать" Padding="10,5" Click="BtnFit_Click" ToolTip="Вписать схему в окно"/>
+      </WrapPanel>
+    </DockPanel>
+
+    <Grid Grid.Row="1">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="250"/>
+      </Grid.ColumnDefinitions>
+      <Border Grid.Column="0" BorderBrush="#CBD5E1" BorderThickness="1" Background="White">
+        <local:BoundaryEditorViewport x:Name="Viewport" ClipToBounds="True"/>
+      </Border>
+      <Border Grid.Column="1" Margin="8,0,0,0" BorderBrush="#D1D5DB" BorderThickness="1"
+              Background="White" Padding="12">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Bottom" Margin="0,14,0,0">
+            <Button Content="Применить" IsDefault="True" Padding="10,7" Margin="0,0,0,6"
+                    Click="BtnApply_Click" Background="#1D4ED8" Foreground="White" BorderThickness="0"/>
+            <Button Content="Отмена" IsCancel="True" Padding="10,7" Click="BtnCancel_Click"/>
+          </StackPanel>
+          <StackPanel>
+            <TextBlock Text="Элементы" FontWeight="SemiBold" Margin="0,0,0,6"/>
+            <TextBlock x:Name="TxtSelection" Text="Выберите отверстие или границу"
+                       TextWrapping="Wrap" Foreground="#334155"/>
+            <Separator Margin="0,12,0,10"/>
+            <TextBlock x:Name="TxtCounts" TextWrapping="Wrap" Foreground="#475569"/>
+            <Separator Margin="0,12,0,10"/>
+            <TextBlock Text="Отверстия заштрихованы. Границы привязаны к рёбрам КЭ."
+                       TextWrapping="Wrap" FontSize="11" Foreground="#64748B"/>
+          </StackPanel>
+        </DockPanel>
+      </Border>
+    </Grid>
+    <Border Grid.Row="2" Margin="0,8,0,0" Background="#F8FAFC" Padding="6,4">
+      <TextBlock x:Name="TxtStatus" Text="Выберите действие" Foreground="#475569"/>
+    </Border>
+  </Grid>
+</Window>

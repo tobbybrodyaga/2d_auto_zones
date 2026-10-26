@@ -1,93 +1,99 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using Autodesk.Revit.DB;
 using LiraSlabZones.Core;
 
 namespace LiraSlabZones.Revit2023
 {
+    internal sealed class ZonePlacementReport
+    {
+        public int Placed { get; set; }
+        public int PlacedBottom { get; set; }
+        public int PlacedTop { get; set; }
+        public List<string> Failures { get; } = new List<string>();
+    }
+
     internal static class ZonePlacer
     {
-        // Футы — ТОЛЬКО здесь (граница Revit API).
         private const double MetersToFeet = UnitConversion.MetersToFeet;
 
-        public static int Place(Document doc, FamilySymbol? defaultSymbol, AnalysisResult analysis)
+        /// <summary>
+        /// Семейства SUM-30…34 — «Элементы узлов» (привязаны к виду). Нижние слои As1/As2
+        /// ставятся на план низа, верхние As3/As4 — на план верха.
+        /// </summary>
+        public static ZonePlacementReport Place(Document doc, FamilySymbol? defaultSymbol, AnalysisResult analysis,
+            View bottomView, View topView)
         {
+            var report = new ZonePlacementReport();
             if (analysis.Zones == null || analysis.Zones.Count == 0)
-                return 0;
+                return report;
 
-            var level = FindNearestLevel(doc, analysis.Zones.First().LevelZM);
-            var root = SolutionPaths.FindRoot();
-            var familiesDir = Path.Combine(root, "families");
-            int count = 0;
+            var overlong = analysis.Zones.Where(RebarTables.ExceedsMaxBarLength).ToList();
+            if (overlong.Count > 0)
+                throw new InvalidOperationException(
+                    $"Размещение остановлено: {overlong.Count} зон превышают 11700 мм " +
+                    $"(№ {string.Join(", ", overlong.Take(10).Select(z => z.ZoneId))}). " +
+                    "Разделите эти зоны в предпросмотре перед размещением.");
 
-            // Группируем по семейству
+            var settings = analysis.Settings ?? AppConfig.LoadEffectiveSettings();
+            var cache = new Dictionary<string, FamilySymbol?>(StringComparer.OrdinalIgnoreCase);
+
             foreach (var group in analysis.Zones.GroupBy(z =>
-                         string.IsNullOrWhiteSpace(z.FamilyFileName)
-                             ? (analysis.Settings.FamilyFileName ?? RebarTables.StraightFamily)
-                             : z.FamilyFileName))
+                string.IsNullOrWhiteSpace(z.FamilyFileName)
+                    ? settings.GetFamilyName(z.FamilyKind)
+                    : AppConfig.StripRfa(z.FamilyFileName)))
             {
-                var fileName = group.Key;
-                FamilySymbol? symbol = null;
-                try
+                var familyName = group.Key;
+                if (!cache.TryGetValue(familyName, out var symbol))
                 {
-                    var path = FindFamilyPath(familiesDir, fileName)
-                               ?? PathResolver.FindFamilyOnODrive(fileName);
-                    if (path != null && File.Exists(path))
-                    {
-                        var name = Path.GetFileNameWithoutExtension(fileName);
-                        symbol = FamilyLoader.EnsureSymbol(doc, path, name);
-                    }
-                    else
-                    {
+                    symbol = FamilyLoader.FindSymbol(doc, familyName);
+                    if (symbol == null
+                        && defaultSymbol != null
+                        && familyName.Equals(settings.GetFamilyName(ZoneFamilyKind.Straight), StringComparison.OrdinalIgnoreCase))
                         symbol = defaultSymbol;
-                    }
-                }
-                catch
-                {
-                    symbol = defaultSymbol;
+                    cache[familyName] = symbol;
                 }
 
-                if (symbol == null) continue;
+                if (symbol == null)
+                    throw new InvalidOperationException(
+                        "Семейство «" + familyName + "» не найдено в проекте Revit.\n" +
+                        "Плагин не подгружает .rfa — загрузите семейство в проект вручную.\n" +
+                        "Имя настраивается в " + AppConfig.UserConfigPath);
+
                 if (!symbol.IsActive) symbol.Activate();
 
                 foreach (var zone in group)
                 {
-                    if (PlaceOne(doc, symbol, level, zone, analysis.Settings))
-                        count++;
+                    var isTop = zone.Layer is RebarLayer.As3 or RebarLayer.As4;
+                    var view = isTop ? topView : bottomView;
+                    var error = PlaceOne(doc, symbol, view, zone, settings);
+                    if (error != null)
+                    {
+                        report.Failures.Add($"зона {zone.ZoneId} ({zone.Layer}, {familyName}): {error}");
+                        continue;
+                    }
+                    report.Placed++;
+                    if (isTop) report.PlacedTop++;
+                    else report.PlacedBottom++;
                 }
             }
 
-            return count;
+            return report;
         }
 
-        private static string? FindFamilyPath(string familiesDir, string fileName)
-        {
-            var direct = Path.Combine(familiesDir, fileName);
-            if (File.Exists(direct)) return direct;
-            // fallback: _R22 variant
-            var alt = Path.Combine(familiesDir, Path.GetFileNameWithoutExtension(fileName) + "_R22.rfa");
-            if (File.Exists(alt)) return alt;
-            var any = Directory.Exists(familiesDir)
-                ? Directory.GetFiles(familiesDir, Path.GetFileNameWithoutExtension(fileName) + "*.rfa").FirstOrDefault()
-                : null;
-            return any;
-        }
-
-        private static bool PlaceOne(
+        /// <returns>null при успехе, иначе причина пропуска.</returns>
+        private static string? PlaceOne(
             Document doc,
             FamilySymbol symbol,
-            Level level,
+            View view,
             AdditionalZone zone,
             AnalysisSettings settings)
         {
             var ox = settings.OffsetXM;
             var oy = settings.OffsetYM;
-            var rotDeg = settings.RotationDeg + zone.RotationDeg;
             var px = zone.Placement.X + ox;
             var py = zone.Placement.Y + oy;
-            // apply global rotation about origin of transform (simple)
             if (Math.Abs(settings.RotationDeg) > 1e-9)
             {
                 var rad = settings.RotationDeg * Math.PI / 180.0;
@@ -99,27 +105,21 @@ namespace LiraSlabZones.Revit2023
                 py = x0 * sin + y0 * cos + oy;
             }
 
-            var pt = new XYZ(px * MetersToFeet, py * MetersToFeet, zone.LevelZM * MetersToFeet);
-            FamilyInstance? inst = null;
+            // Элемент узла лежит в плоскости вида; высотная отметка ЛИРЫ здесь не нужна.
+            var z = (view as ViewPlan)?.GenLevel?.ProjectElevation ?? 0;
+            var pt = new XYZ(px * MetersToFeet, py * MetersToFeet, z);
+            FamilyInstance? inst;
             try
             {
-                inst = doc.Create.NewFamilyInstance(pt, symbol, level, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
+                inst = doc.Create.NewFamilyInstance(pt, symbol, view);
             }
-            catch
+            catch (Exception ex)
             {
-                try
-                {
-                    inst = doc.Create.NewFamilyInstance(pt, symbol, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
-                }
-                catch
-                {
-                    return false;
-                }
+                return ex.Message;
             }
 
-            if (inst == null) return false;
+            if (inst == null) return "Revit не создал экземпляр";
 
-            // Поворот вокруг Z: Direction Y → 90° (+ UI)
             var zoneRot = zone.Direction == ZoneDirection.Y ? 90.0 : 0.0;
             var totalRot = (settings.RotationDeg + zoneRot) * Math.PI / 180.0;
             if (Math.Abs(totalRot) > 1e-9)
@@ -160,23 +160,17 @@ namespace LiraSlabZones.Revit2023
                 string.IsNullOrEmpty(zone.Comment)
                     ? $"As+={zone.AsAdditional:F2}; Ø{zone.DiameterMm}/{zone.BarStepMm}×{zone.BarCount}; {zone.Direction}"
                     : zone.Comment);
-            TrySetBoolParam(inst, new[] { "Учет в спецификации", "Учёт в спецификации" }, zone.CountInSpec);
-            TrySetBoolParam(inst, new[] { "подсчет стержней", "Подсчет стержней", "подсчёт стержней" }, zone.CountBars);
+            // В семействах SUM-30…34 флаги называются «RNF.Учёт в спецификации» / «RNF.Подсчет стержней».
+            TrySetBoolParam(inst, new[]
+            {
+                "RNF.Учёт в спецификации", "RNF.Учет в спецификации", "Учет в спецификации", "Учёт в спецификации"
+            }, zone.CountInSpec);
+            TrySetBoolParam(inst, new[]
+            {
+                "RNF.Подсчет стержней", "RNF.Подсчёт стержней", "подсчет стержней", "Подсчет стержней", "подсчёт стержней"
+            }, zone.CountBars);
 
-            return true;
-        }
-
-        private static Level FindNearestLevel(Document doc, double zMeters)
-        {
-            var z = zMeters * MetersToFeet;
-            var levels = new FilteredElementCollector(doc)
-                .OfClass(typeof(Level))
-                .Cast<Level>()
-                .OrderBy(l => Math.Abs(l.Elevation - z))
-                .ToList();
-
-            return levels.FirstOrDefault()
-                   ?? throw new InvalidOperationException("В проекте нет уровней.");
+            return null;
         }
 
         private static void TrySetDoubleParam(Element e, string[] names, double valueFeet)

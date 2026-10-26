@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <AppendPlatformToOutputPath>true</AppendPlatformToOutputPath>
+    <AssemblyName>LiraSlabZones.Revit2025</AssemblyName>
+    <RootNamespace>LiraSlabZones.Revit2023</RootNamespace>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultPageItems>false</EnableDefaultPageItems>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <RevitApiDir Condition="'$(RevitApiDir)' == ''">C:\Program Files\Autodesk\Revit 2025</RevitApiDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="RevitAPI"><HintPath>$(RevitApiDir)\RevitAPI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="RevitAPIUI"><HintPath>$(RevitApiDir)\RevitAPIUI.dll</HintPath><Private>false</Private></Reference>
+    <ProjectReference Include="..\LiraSlabZones.Core\LiraSlabZones.Core.csproj" />
+    <Compile Include="..\LiraSlabZones.Revit2023\*.cs" Link="%(Filename)%(Extension)" />
+    <Compile Include="..\LiraSlabZones.Revit2023\UI\*.cs" Link="UI\%(Filename)%(Extension)" />
+    <Page Include="..\LiraSlabZones.Revit2023\UI\*.xaml" Link="UI\%(Filename)%(Extension)" />
+    <None Include="..\..\DefaultSettings.cfg" Link="DefaultSettings.cfg" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

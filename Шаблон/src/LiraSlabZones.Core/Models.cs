@@ -90,12 +90,40 @@ namespace LiraSlabZones.Core
     /// <summary>Прямоугольное отверстие на плане (м). Перпендикулярный габарит для X-зон = HeightM, для Y = WidthM.</summary>
     public sealed class OpeningInfo
     {
+        public int OpeningId { get; set; }
         public double MinXM { get; set; }
         public double MaxXM { get; set; }
         public double MinYM { get; set; }
         public double MaxYM { get; set; }
+        /// <summary>КЭ, к геометрии которых привязано отверстие.</summary>
+        public List<int> ElementIds { get; set; } = new List<int>();
+        /// <summary>Якоря углов на вершины контура КЭ, в порядке min/min, max/min, max/max, min/max.</summary>
+        public List<MeshVertexAnchor> MeshAnchors { get; set; } = new List<MeshVertexAnchor>();
         public double WidthM => Math.Abs(MaxXM - MinXM);
         public double HeightM => Math.Abs(MaxYM - MinYM);
+    }
+
+    public sealed class MeshVertexAnchor
+    {
+        public int ElementId { get; set; }
+        public int VertexIndex { get; set; }
+        public Point3 Position { get; set; } = new Point3();
+    }
+
+    public sealed class MeshEdgeAnchor
+    {
+        public int ElementId { get; set; }
+        public int EdgeIndex { get; set; }
+        public Point3 Start { get; set; } = new Point3();
+        public Point3 End { get; set; } = new Point3();
+    }
+
+    /// <summary>Добавленная пользователем граница, собранная из рёбер конечных элементов.</summary>
+    public sealed class BoundaryConditionInfo
+    {
+        public int BoundaryId { get; set; }
+        public string Name { get; set; } = "Граница";
+        public List<MeshEdgeAnchor> Edges { get; set; } = new List<MeshEdgeAnchor>();
     }
 
     public sealed class AdditionalZone
@@ -126,7 +154,8 @@ namespace LiraSlabZones.Core
         public double WidthMm { get; set; }
         public double LengthMm { get; set; }
         public ZoneFamilyKind FamilyKind { get; set; } = ZoneFamilyKind.Straight;
-        public string FamilyFileName { get; set; } = RebarTables.StraightFamily;
+        /// <summary>Имя семейства в проекте Revit (без .rfa).</summary>
+        public string FamilyFileName { get; set; } = "SUM-30-Зона дополнительного армирования";
         public double AsCoveredCm2PerM { get; set; }
         public string ConcreteClass { get; set; } = "B25";
         public double AlphaCoef { get; set; } = 1.0;
@@ -201,9 +230,20 @@ namespace LiraSlabZones.Core
 
         public List<Point3> Outline { get; set; } = new List<Point3>();
         public List<AdditionalZone> Zones { get; set; } = new List<AdditionalZone>();
+        public List<ZonePatch> Patches { get; set; } = new List<ZonePatch>();
+        public bool PatchPreviewOnly { get; set; }
         public List<ConstructionAxis> Axes { get; set; } = new List<ConstructionAxis>();
         public List<ElevationLevelInfo> AvailableLevels { get; set; } = new List<ElevationLevelInfo>();
+
+        [Newtonsoft.Json.JsonProperty("Levels")]
+        private List<ElevationLevelInfo> ExportedLevels
+        {
+            set { if (value != null) AvailableLevels = value; }
+        }
         public List<OpeningInfo> Openings { get; set; } = new List<OpeningInfo>();
+        /// <summary>Список отверстий вручную отредактирован; не заменять его автодетекцией при пересчёте.</summary>
+        public bool UseCustomOpenings { get; set; }
+        public List<BoundaryConditionInfo> BoundaryConditions { get; set; } = new List<BoundaryConditionInfo>();
 
         /// <summary>Средняя Z выбранного уровня, м.</summary>
         public double ElevationZM { get; set; }
@@ -212,6 +252,49 @@ namespace LiraSlabZones.Core
         public string ElevationLabel { get; set; } = string.Empty;
 
         public PreviewStats Stats { get; set; } = new PreviewStats();
+        public ZoneDiagnostics Diagnostics { get; set; } = new ZoneDiagnostics();
+    }
+
+    public sealed class ZonePatch
+    {
+        public int PatchId { get; set; }
+        public RebarLayer Layer { get; set; }
+        public ZoneDirection Direction { get; set; }
+        public double PeakAsAdditionalCm2PerM { get; set; }
+        public int MinCellX { get; set; }
+        public int MaxCellX { get; set; }
+        public int MinCellY { get; set; }
+        public int MaxCellY { get; set; }
+        public double MinXM { get; set; }
+        public double MaxXM { get; set; }
+        public double MinYM { get; set; }
+        public double MaxYM { get; set; }
+        public List<int> ElementIds { get; set; } = new List<int>();
+        public List<ZonePatchCell> Cells { get; set; } = new List<ZonePatchCell>();
+    }
+
+    public sealed class ZonePatchFrameSelection
+    {
+        public List<ZonePatch> Patches { get; set; } = new List<ZonePatch>();
+        public List<AdditionalZone> Zones { get; set; } = new List<AdditionalZone>();
+        public List<ZonePatchFrameElement> Elements { get; set; } = new List<ZonePatchFrameElement>();
+        public List<Point3> SlabOutline { get; set; } = new List<Point3>();
+        public double MinXM { get; set; }
+        public double MaxXM { get; set; }
+        public double MinYM { get; set; }
+        public double MaxYM { get; set; }
+    }
+
+    public sealed class ZonePatchCell
+    {
+        public int Ix { get; set; }
+        public int Iy { get; set; }
+        public double AsAdditionalCm2PerM { get; set; }
+        public double? RawAsAdditionalCm2PerM { get; set; }
+        public double MinXM { get; set; }
+        public double MaxXM { get; set; }
+        public double MinYM { get; set; }
+        public double MaxYM { get; set; }
     }
 
     public sealed class PreviewStats
@@ -237,6 +320,7 @@ namespace LiraSlabZones.Core
     /// </summary>
     public sealed class AnalysisSettings
     {
+        public List<int> ExcludedZoneDiametersMm { get; set; } = new List<int>();
         public double AsMainCm2PerM { get; set; } = 0;
         public double AsMainAs1 { get; set; } = 0;
         public double AsMainAs2 { get; set; } = 0;
@@ -258,15 +342,60 @@ namespace LiraSlabZones.Core
         /// <summary>Плита/уровень подтверждены («Взять плиту…» или демо).</summary>
         public bool SlabSelected { get; set; }
 
-        /// <summary>ElementCenter = старый per-FE; AutoLayout = движок раскладки.</summary>
+        /// <summary>Текущий режим — пятна; LegacyZones включает архивное размещение явно.</summary>
         public string PlacementMode { get; set; } = "AutoLayout";
         public int DesignOption { get; set; } = 1;
 
-        public string FamilyName { get; set; } = "SUM-30-Зона дополнительного армирования";
-        public string FamilyFileName { get; set; } = "SUM-30-Зона дополнительного армирования.rfa";
+        /// <summary>Прямая зона (SUM-30) — имя семейства в проекте Revit.</summary>
+        public string FamilyStraight { get; set; } = "SUM-30-Зона дополнительного армирования";
+        public string FamilyL { get; set; } = "SUM-31-Зона дополнительного армирования Г";
+        public string FamilyPEqual { get; set; } = "SUM-32-Зона дополнительного армирования П-образная равнополочная";
+        public string FamilyPDiff { get; set; } = "SUM-33-Зона дополнительного армирования П-образная разнополочная";
+        public string FamilyBentStick { get; set; } = "SUM-34-Зона дополнительного армирования Гнутый стержень";
 
-        /// <summary>Минимальная ширина зоны, м (0 = без фильтра). В UI вводится в мм.</summary>
-        public double MinZoneWidthM { get; set; } = 0;
+        /// <summary>Синоним FamilyStraight (совместимость JSON).</summary>
+        public string FamilyName
+        {
+            get => string.IsNullOrWhiteSpace(FamilyStraight) ? "SUM-30-Зона дополнительного армирования" : FamilyStraight;
+            set => FamilyStraight = AppConfig.StripRfa(value ?? "");
+        }
+
+        /// <summary>Совместимость: имя + «.rfa», фактически в Revit ищется FamilyStraight.</summary>
+        public string FamilyFileName
+        {
+            get => FamilyName + ".rfa";
+            set
+            {
+                var n = AppConfig.StripRfa(value ?? "");
+                if (!string.IsNullOrWhiteSpace(n))
+                    FamilyStraight = n;
+            }
+        }
+
+        public string GetFamilyName(ZoneFamilyKind kind) => kind switch
+        {
+            ZoneFamilyKind.L => string.IsNullOrWhiteSpace(FamilyL) ? BuiltIn(kind) : FamilyL.Trim(),
+            ZoneFamilyKind.PEqual => string.IsNullOrWhiteSpace(FamilyPEqual) ? BuiltIn(kind) : FamilyPEqual.Trim(),
+            ZoneFamilyKind.PDiff => string.IsNullOrWhiteSpace(FamilyPDiff) ? BuiltIn(kind) : FamilyPDiff.Trim(),
+            ZoneFamilyKind.BentStick => string.IsNullOrWhiteSpace(FamilyBentStick) ? BuiltIn(kind) : FamilyBentStick.Trim(),
+            _ => FamilyName
+        };
+
+        private static string BuiltIn(ZoneFamilyKind kind) => kind switch
+        {
+            ZoneFamilyKind.L => "SUM-31-Зона дополнительного армирования Г",
+            ZoneFamilyKind.PEqual => "SUM-32-Зона дополнительного армирования П-образная равнополочная",
+            ZoneFamilyKind.PDiff => "SUM-33-Зона дополнительного армирования П-образная разнополочная",
+            ZoneFamilyKind.BentStick => "SUM-34-Зона дополнительного армирования Гнутый стержень",
+            _ => "SUM-30-Зона дополнительного армирования"
+        };
+
+        /// <summary>Минимальная ширина зоны, м. В UI вводится в мм.</summary>
+        public double MinZoneWidthM { get; set; } = 0.3;
+
+        [Newtonsoft.Json.JsonIgnore]
+        public double EffectiveMinZoneWidthM => Math.Max(
+            Math.Max(0, MinZoneWidthM), Math.Max(1, GridCellMm) / 1000.0);
 
         /// <summary>Максимальная ширина зоны, м (0 = без ограничения). В UI вводится в мм.</summary>
         public double MaxZoneWidthM { get; set; } = 0;
@@ -314,14 +443,21 @@ namespace LiraSlabZones.Core
         public double CoverTopMm { get; set; } = 25;
         public double CoverBottomMm { get; set; } = 25;
         public int MaxDiameterMm { get; set; } = 36;
+        /// <summary>Включает обработку зон у внешней границы плиты и отверстий.</summary>
+        public bool ApplySlabBoundaryAndOpeningRules { get; set; }
         public bool ApplyHoleRules { get; set; } = true;
         public bool ApplyBentRules { get; set; } = true;
         public double HoleIgnorePerpMm { get; set; } = 200;
         public double EdgeOffsetMm { get; set; } = 50;
         /// <summary>Отступ зон от края плиты (контура), мм.</summary>
         public double SlabEdgeInsetMm { get; set; } = 30;
-        /// <summary>true → шаг стержней 100 мм, иначе 200.</summary>
+        /// <summary>Допустимые шаги автоматически подобранного дополнительного армирования, мм.</summary>
+        public List<int> AllowedAdditionalBarStepsMm { get; set; } = new List<int> { 100, 200 };
+        /// <summary>true → разрешить подбор из шагов 100 и 200 мм; false → только 200 мм.</summary>
         public bool UseBarStep100 { get; set; }
+        /// <summary>Swap layer directions: As1/As3 use Y, As2/As4 use X.</summary>
+        public bool ReverseZoneDirections { get; set; }
+        public bool AveragePatchPeaks { get; set; }
 
         /// <summary>Пересчитать AsMainAs1…4 из Ø/шага фона (низ → As1/As2, верх → As3/As4).</summary>
         public void SyncBackgroundAsFromBars()
@@ -360,7 +496,7 @@ namespace LiraSlabZones.Core
             }
             if (string.IsNullOrWhiteSpace(ConcreteClass))
             {
-                reason = "Задайте класс бетона (влияет на анкеровку и длину зоны SUM-3).";
+                reason = "Задайте класс бетона (влияет на анкеровку и нахлёст).";
                 return false;
             }
             reason = "";

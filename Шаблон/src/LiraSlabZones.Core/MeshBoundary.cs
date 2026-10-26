@@ -16,17 +16,29 @@ namespace LiraSlabZones.Core
 
             var edgeCount = new Dictionary<(int A, int B), int>();
             var edgeGeom = new Dictionary<(int A, int B), (Point3 Pa, Point3 Pb, int NodeA, int NodeB)>();
+            // Старые JSON содержат отсортированный Contour, но исходный порядок NodeIds.
+            // Общие вершины определяем по геометрии, чтобы не строить ложные рёбра.
+            var vertexIds = new Dictionary<(double X, double Y, double Z), int>();
+            int VertexId(Point3 p)
+            {
+                var key = (p.X, p.Y, p.Z);
+                if (!vertexIds.TryGetValue(key, out var id))
+                {
+                    id = vertexIds.Count;
+                    vertexIds.Add(key, id);
+                }
+                return id;
+            }
 
             foreach (var plate in plates)
             {
-                var ids = plate.NodeIds;
                 var pts = plate.Contour;
-                if (ids.Count < 3 || pts.Count < 3) continue;
-                int n = Math.Min(ids.Count, pts.Count);
+                if (pts.Count < 3) continue;
+                int n = pts.Count;
                 for (int i = 0; i < n; i++)
                 {
                     int j = (i + 1) % n;
-                    int na = ids[i], nb = ids[j];
+                    int na = VertexId(pts[i]), nb = VertexId(pts[j]);
                     if (na == nb) continue;
                     var key = na < nb ? (na, nb) : (nb, na);
                     edgeCount.TryGetValue(key, out int c);
@@ -142,6 +154,35 @@ namespace LiraSlabZones.Core
                     list.Add(p);
             }
             return list;
+        }
+
+        /// <summary>
+        /// Характерный размер ячейки КЭ: наиболее частый меньший габарит,
+        /// округлённый до 10 мм. Редкие доборные элементы не смещают результат.
+        /// </summary>
+        public static int EstimateGridCellMm(IList<LiraPlateElement> plates, int fallbackMm = 300)
+        {
+            if (plates == null || plates.Count == 0) return fallbackMm;
+
+            var buckets = new Dictionary<int, int>();
+            foreach (var plate in plates)
+            {
+                var sizeM = Math.Min(plate.WidthM, plate.LengthM);
+                if (sizeM <= 0 && plate.Contour != null && plate.Contour.Count >= 3)
+                {
+                    ContourFix.EdgeAlignedSize(plate.Contour, out var widthM, out var lengthM);
+                    sizeM = Math.Min(widthM, lengthM);
+                }
+
+                var sizeMm = (int)(Math.Round(sizeM * 100.0, MidpointRounding.AwayFromZero) * 10.0);
+                if (sizeMm < 50 || sizeMm > 5000) continue;
+                buckets.TryGetValue(sizeMm, out var count);
+                buckets[sizeMm] = count + 1;
+            }
+
+            return buckets.Count == 0
+                ? fallbackMm
+                : buckets.OrderByDescending(x => x.Value).ThenBy(x => x.Key).First().Key;
         }
 
         /// <summary>
@@ -335,7 +376,7 @@ namespace LiraSlabZones.Core
             IList<Point3>? outline, double insetMm)
         {
             if (outline == null || outline.Count < 3) return true;
-            var inset = (insetMm > 0 ? insetMm : 30) / 1000.0;
+            var inset = Math.Max(0, insetMm) / 1000.0;
             var oMinX = outline.Min(p => p.X) + inset;
             var oMaxX = outline.Max(p => p.X) - inset;
             var oMinY = outline.Min(p => p.Y) + inset;
@@ -353,14 +394,54 @@ namespace LiraSlabZones.Core
             var cy = (minY + maxY) * 0.5;
             if (!PointInPolygon(cx, cy, outline)) return false;
 
-            // Углы: хотя бы 3 из 4 внутри или на границе AABB (уже внутри AABB)
-            int inside = 0;
-            if (PointInPolygon(minX, minY, outline)) inside++;
-            if (PointInPolygon(maxX, minY, outline)) inside++;
-            if (PointInPolygon(maxX, maxY, outline)) inside++;
-            if (PointInPolygon(minX, maxY, outline)) inside++;
-            // Для вогнутых контуров AABB-углы могут вылезать — требуем центр + ≥2 угла
-            return inside >= 2;
+            // AABB clipping alone is insufficient at stepped, sloped and curved
+            // boundaries. Contract only the sides whose corners remain outside.
+            const double trimStepM = 0.01;
+            const double cornerInsetM = 1e-6;
+            for (var iteration = 0; iteration < 2000; iteration++)
+            {
+                cx = (minX + maxX) * 0.5;
+                cy = (minY + maxY) * 0.5;
+                var leftBottomInside = PointInPolygon(minX + cornerInsetM, minY + cornerInsetM, outline);
+                var leftTopInside = PointInPolygon(minX + cornerInsetM, maxY - cornerInsetM, outline);
+                var rightBottomInside = PointInPolygon(maxX - cornerInsetM, minY + cornerInsetM, outline);
+                var rightTopInside = PointInPolygon(maxX - cornerInsetM, maxY - cornerInsetM, outline);
+                if (leftBottomInside && leftTopInside && rightBottomInside && rightTopInside)
+                    return true;
+
+                var trimLeft = !leftBottomInside && !leftTopInside;
+                var trimRight = !rightBottomInside && !rightTopInside;
+                var trimBottom = !leftBottomInside && !rightBottomInside;
+                var trimTop = !leftTopInside && !rightTopInside;
+                if (!trimLeft && !trimRight && !trimBottom && !trimTop)
+                {
+                    var width = maxX - minX;
+                    var height = maxY - minY;
+                    if (!leftBottomInside)
+                    {
+                        if (height <= width) trimLeft = true; else trimBottom = true;
+                    }
+                    else if (!leftTopInside)
+                    {
+                        if (height <= width) trimLeft = true; else trimTop = true;
+                    }
+                    else if (!rightBottomInside)
+                    {
+                        if (height <= width) trimRight = true; else trimBottom = true;
+                    }
+                    else if (!rightTopInside)
+                    {
+                        if (height <= width) trimRight = true; else trimTop = true;
+                    }
+                }
+                if (trimLeft) minX = Math.Min(cx, minX + trimStepM);
+                if (trimRight) maxX = Math.Max(cx, maxX - trimStepM);
+                if (trimBottom) minY = Math.Min(cy, minY + trimStepM);
+                if (trimTop) maxY = Math.Max(cy, maxY - trimStepM);
+                if (maxX - minX < 0.05 || maxY - minY < 0.05)
+                    return false;
+            }
+            return false;
         }
     }
 }

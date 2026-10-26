@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "lira-code-search": {
+      "command": "node",
+      "args": ["C:\\Users\\Filippov_G\\Pictures\\2DSaveliyZones\\2d_auto_zones\\Шаблон\\tools\\code-search-mcp.cjs"]
+    }
+  }
+}

@@ -29,32 +29,29 @@ namespace LiraSlabZones.Revit2023
                 }
 
                 var analysis = SlabZoneAnalyzer.LoadJson(jsonPath!);
-                var familyPath = Path.Combine(root, "families", analysis.Settings.FamilyFileName);
-                if (!File.Exists(familyPath))
+                var settings = AppConfig.LoadEffectiveSettings();
+                // имена семейств — из пользовательского/дефолтного cfg
+                analysis.Settings.FamilyStraight = settings.FamilyStraight;
+                analysis.Settings.FamilyL = settings.FamilyL;
+                analysis.Settings.FamilyPEqual = settings.FamilyPEqual;
+                analysis.Settings.FamilyPDiff = settings.FamilyPDiff;
+                analysis.Settings.FamilyBentStick = settings.FamilyBentStick;
+
+                FamilySymbol symbol;
+                try
                 {
-                    // запасной путь — исходная отсоединёнка
-                    var alt = PathResolver.FindFamilyOnODrive(analysis.Settings.FamilyFileName);
-                    if (alt != null) familyPath = alt;
+                    symbol = FamilyLoader.ResolveFromProject(doc, analysis.Settings.FamilyStraight);
+                }
+                catch (OperationCanceledException)
+                {
+                    message = "Семейство не выбрано.";
+                    return Result.Cancelled;
                 }
 
-                if (!File.Exists(familyPath))
-                    throw new FileNotFoundException("Не найдено семейство: " + analysis.Settings.FamilyFileName, familyPath);
+                analysis.Settings.FamilyStraight = symbol.FamilyName;
+                AppConfig.SaveUserSettings(analysis.Settings);
 
-                int placed;
-                using (var tx = new Transaction(doc, "Раскладка зон доп.армирования (ЛИРА)"))
-                {
-                    tx.Start();
-                    var symbol = FamilyLoader.EnsureSymbol(doc, familyPath, analysis.Settings.FamilyName);
-                    placed = ZonePlacer.Place(doc, symbol, analysis);
-                    tx.Commit();
-                }
-
-                TaskDialog.Show("LiraSlabZones",
-                    $"Размещено экземпляров: {placed}\n" +
-                    $"Зон в JSON: {analysis.Zones.Count}\n" +
-                    $"Семейство: {analysis.Settings.FamilyName}\n\n" +
-                    "Сопоставление контура с моделью выполните вручную в Revit (без привязки к осям).");
-
+                ZonePlacementService.PlaceWithPrompt(commandData.Application, symbol, analysis);
                 return Result.Succeeded;
             }
             catch (Exception ex)
@@ -77,42 +74,29 @@ namespace LiraSlabZones.Revit2023
                             ?? throw new InvalidOperationException("Нет активного документа Revit.");
                 var doc = uiDoc.Document;
                 var root = PathResolver.FindSolutionRoot();
-                var configPath = Path.Combine(root, "config", "settings.json");
                 var outputPath = Path.Combine(root, "output", "slab_zones.json");
 
-                if (!File.Exists(configPath))
-                    AnalysisSettingsStore.Save(configPath, new AnalysisSettings());
+                var settings = AppConfig.LoadEffectiveSettings();
 
-                var settings = AnalysisSettingsStore.LoadOrDefault(configPath);
+                FamilySymbol symbol;
+                try
+                {
+                    symbol = FamilyLoader.ResolveFromProject(doc, settings.FamilyStraight);
+                }
+                catch (OperationCanceledException)
+                {
+                    message = "Семейство не выбрано.";
+                    return Result.Cancelled;
+                }
+
+                settings.FamilyStraight = symbol.FamilyName;
+                AppConfig.SaveUserSettings(settings);
+
                 var analyzer = new SlabZoneAnalyzer();
                 var analysis = analyzer.Analyze(null, settings);
                 SlabZoneAnalyzer.SaveJson(analysis, outputPath);
 
-                var familyPath = Path.Combine(root, "families", settings.FamilyFileName);
-                if (!File.Exists(familyPath))
-                {
-                    var alt = PathResolver.FindFamilyOnODrive(settings.FamilyFileName);
-                    if (alt != null) familyPath = alt;
-                }
-
-                if (!File.Exists(familyPath))
-                    throw new FileNotFoundException("Не найдено семейство: " + settings.FamilyFileName);
-
-                int placed;
-                using (var tx = new Transaction(doc, "Анализ ЛИРА + раскладка зон"))
-                {
-                    tx.Start();
-                    var symbol = FamilyLoader.EnsureSymbol(doc, familyPath, settings.FamilyName);
-                    placed = ZonePlacer.Place(doc, symbol, analysis);
-                    tx.Commit();
-                }
-
-                TaskDialog.Show("LiraSlabZones",
-                    $"Документ ЛИРА: {analysis.DocumentName}\n" +
-                    $"Пластин: {analysis.PlateCount}, зон: {analysis.Zones.Count}\n" +
-                    $"Размещено в Revit: {placed}\n" +
-                    $"JSON: {outputPath}");
-
+                ZonePlacementService.PlaceWithPrompt(commandData.Application, symbol, analysis);
                 return Result.Succeeded;
             }
             catch (Exception ex)

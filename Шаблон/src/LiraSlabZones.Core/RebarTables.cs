@@ -14,16 +14,19 @@ namespace LiraSlabZones.Core
             1460, 1950, 2340, 2900, 3900, 4680, 5850, 7800, 8800, 11700
         };
 
-        public const string StraightFamily = "SUM-30-Зона дополнительного армирования.rfa";
-        public const string LFamily = "SUM-31-Зона дополнительного армирования Г.rfa";
-        public const string PEqualFamily = "SUM-32-Зона дополнительного армирования П-образная равнополочная.rfa";
-        public const string PDiffFamily = "SUM-33-Зона дополнительного армирования П-образная разнополочная.rfa";
-        public const string BentStickFamily = "SUM-34-Зона дополнительного армирования Гнутый стержень.rfa";
+        public const string StraightFamily = "SUM-30-Зона дополнительного армирования";
+        public const string LFamily = "SUM-31-Зона дополнительного армирования Г";
+        public const string PEqualFamily = "SUM-32-Зона дополнительного армирования П-образная равнополочная";
+        public const string PDiffFamily = "SUM-33-Зона дополнительного армирования П-образная разнополочная";
+        public const string BentStickFamily = "SUM-34-Зона дополнительного армирования Гнутый стержень";
 
-        public static readonly string[] AllFamilyFiles =
+        public static readonly string[] AllFamilyNames =
         {
             StraightFamily, LFamily, PEqualFamily, PDiffFamily, BentStickFamily
         };
+
+        [Obsolete("Используйте AllFamilyNames — семейства не подгружаются из .rfa.")]
+        public static readonly string[] AllFamilyFiles = AllFamilyNames;
 
         // Анкеровка A500, мм (уже округлено вверх до 10 в ТЗ)
         private static readonly Dictionary<string, Dictionary<int, int>> Anchorage = new()
@@ -88,6 +91,21 @@ namespace LiraSlabZones.Core
             return CeilToStep(Lap[c][d], 50);
         }
 
+        /// <summary>
+        /// Минимальное продольное перекрытие двух зон. Оно применяется только для
+        /// стыка с зоной длиной 11700 мм и равно двум нахлёстам большего Ø.
+        /// </summary>
+        public static int AllowedZoneOverlapMm(AdditionalZone first, AdditionalZone second)
+        {
+            bool HasPlanLength11700(AdditionalZone zone) =>
+                Math.Abs(zone.LengthMm - 11700) <= 1 ||
+                Math.Abs(UnitConversion.MetersToMm(zone.LengthM) - 11700) <= 1;
+            if (!HasPlanLength11700(first) && !HasPlanLength11700(second))
+                return 0;
+            var governing = first.DiameterMm >= second.DiameterMm ? first : second;
+            return 2 * LapLenMm(governing.ConcreteClass, governing.DiameterMm);
+        }
+
         public static int MandrelDiamMm(int diameterMm)
         {
             var d = NearestSupportedDiameter(diameterMm, Mandrel.Keys);
@@ -99,6 +117,29 @@ namespace LiraSlabZones.Core
             foreach (var L in Sum3FamilyLengthsMm)
                 if (L >= requiredLenMm) return L;
             return Sum3FamilyLengthsMm[Sum3FamilyLengthsMm.Length - 1];
+        }
+
+        /// <summary>
+        /// Полная длина гнутого стержня: видимая на плане часть плюс вертикальные полки.
+        /// Типовой ряд прямых SUM-30 к гнутым семействам не применяется.
+        /// </summary>
+        public static int BentBarTotalLengthMm(
+            double planLengthMm, double verticalLegMm, ZoneFamilyKind familyKind)
+        {
+            var legCount = familyKind is ZoneFamilyKind.PEqual or ZoneFamilyKind.PDiff ? 2 : 1;
+            return CeilToStep(Math.Max(0, planLengthMm) + legCount * Math.Max(0, verticalLegMm), 10);
+        }
+
+        public static bool ExceedsMaxBarLength(AdditionalZone zone)
+        {
+            if (zone.Contour == null || zone.Contour.Count < 3) return false;
+            var planMm = UnitConversion.MetersToMm(zone.Direction == ZoneDirection.X
+                ? zone.Contour.Max(p => p.X) - zone.Contour.Min(p => p.X)
+                : zone.Contour.Max(p => p.Y) - zone.Contour.Min(p => p.Y));
+            var totalMm = zone.FamilyKind == ZoneFamilyKind.Straight
+                ? planMm
+                : BentBarTotalLengthMm(planMm, zone.VerticalLegMm, zone.FamilyKind);
+            return totalMm > 11701;
         }
 
         /// <summary>Максимальная длина SUM-3, не превышающая доступный габарит (подрезка краем плиты).</summary>
@@ -114,7 +155,9 @@ namespace LiraSlabZones.Core
             return best;
         }
 
-        public static string FamilyFileName(ZoneFamilyKind kind) => kind switch
+        public static string FamilyFileName(ZoneFamilyKind kind) => FamilyName(kind);
+
+        public static string FamilyName(ZoneFamilyKind kind) => kind switch
         {
             ZoneFamilyKind.L => LFamily,
             ZoneFamilyKind.PEqual => PEqualFamily,
@@ -123,8 +166,14 @@ namespace LiraSlabZones.Core
             _ => StraightFamily
         };
 
-        public static ZoneDirection DirectionForLayer(RebarLayer layer) =>
-            layer is RebarLayer.As1 or RebarLayer.As3 ? ZoneDirection.X : ZoneDirection.Y;
+        public static ZoneDirection DirectionForLayer(RebarLayer layer, bool reverse = false)
+        {
+            var normal = layer is RebarLayer.As1 or RebarLayer.As3
+                ? ZoneDirection.X
+                : ZoneDirection.Y;
+            if (!reverse) return normal;
+            return normal == ZoneDirection.X ? ZoneDirection.Y : ZoneDirection.X;
+        }
 
         public static int RowForLayer(RebarLayer layer) => (int)layer;
     }

@@ -1,0 +1,17 @@
+---
+description: Token-efficient code search and RagCode routing
+alwaysApply: true
+---
+
+# Code Search
+
+- For conceptual C#, XAML, PowerShell and project-file queries, use project MCP `semantic_search` first (local Ollama embeddings + Qdrant), then `read_lines` for only the needed range. Re-index with `index_code` after substantial changes; ordinary search does not need re-indexing.
+- Use `find_code` for exact identifiers and literals. Keep `limit` small and use `path_filter` when known. Fall back to narrow `rg -n` if the MCP server is unavailable or returns no relevant hit.
+- Use RagCode semantic search only for Python (`*.py`). Index once per session only when the Python collection is missing or RagCode explicitly reports it stale.
+- Use `search_docs` for Markdown only when the documentation collection is already available. Otherwise use the project MCP or `rg`.
+- Do not call RagCode for C#, XAML, PowerShell, solution, or project files (`*.cs`, `*.xaml`, `*.ps1`, `*.sln`, `*.csproj`). Its collection is empty for these languages.
+- Use `rg --files` only when the file location is unknown. Exclude `bin`, `obj`, `dist`, `.git`, and generated output unless build artifacts are the subject.
+- After one RagCode empty-index or unsupported-language error, switch to the project MCP or `rg`. Do not retry indexing in the same task.
+- Re-index only after a major branch switch or major Python changes. Ordinary C# edits do not require re-indexing.
+- Batch independent searches and targeted reads. Avoid full-file reads when a symbol or line range is known.
+- Keep tool output narrow with file globs, line ranges, and conservative output limits.
