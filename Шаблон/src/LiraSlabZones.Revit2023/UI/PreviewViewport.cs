@@ -124,6 +124,9 @@ namespace LiraSlabZones.Revit2023.UI
             ? _patchCandidateZones
             : _result?.Zones ?? new List<AdditionalZone>();
 
+        /// <summary>Снимок зон, которые сейчас показаны на холсте (с учётом ручных правок и отмены).</summary>
+        public List<AdditionalZone> PlacementZones => WorkingZones.ToList();
+
         public bool UndoLastEdit()
         {
             if (_result == null || _undo.Count == 0) return false;

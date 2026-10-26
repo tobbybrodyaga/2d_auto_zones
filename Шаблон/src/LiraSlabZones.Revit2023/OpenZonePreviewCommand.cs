@@ -13,6 +13,7 @@ namespace LiraSlabZones.Revit2023
     public sealed class OpenZonePreviewCommand : IExternalCommand
     {
         private static ZonePreviewWindow? _window;
+        private static RevitActionQueue? _queue;
 
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
@@ -41,7 +42,9 @@ namespace LiraSlabZones.Revit2023
                 {
                     var doc = uiDoc.Document;
                     _window.SetProjectFamilies(FamilyLoader.ListFamilyNames(doc), settings.FamilyStraight);
-                    _window.SetPlaceCallback(result => PlaceIntoRevit(doc, result));
+                    // ExternalEvent создаётся только в контексте Revit API — здесь, а не в обработчике кнопки.
+                    _queue ??= new RevitActionQueue();
+                    _window.SetPlaceCallback(result => _queue.Run(app => PlaceIntoRevit(app, result)));
                 }
 
                 _window.Closed += (_, __) => _window = null;
@@ -60,8 +63,10 @@ namespace LiraSlabZones.Revit2023
             }
         }
 
-        private static void PlaceIntoRevit(Document doc, AnalysisResult analysis)
+        private static void PlaceIntoRevit(UIApplication app, AnalysisResult analysis)
         {
+            var doc = app.ActiveUIDocument?.Document;
+            if (doc == null) return;
             AppConfig.SaveUserSettings(analysis.Settings);
 
             var familyName = analysis.Settings.FamilyStraight;
@@ -85,20 +90,7 @@ namespace LiraSlabZones.Revit2023
             Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
             SlabZoneAnalyzer.SaveJson(analysis, outPath);
 
-            int placed;
-            using (var tx = new Transaction(doc, "LiraSlabZones: зоны из превью"))
-            {
-                tx.Start();
-                if (!symbol.IsActive) symbol.Activate();
-                placed = ZonePlacer.Place(doc, symbol, analysis);
-                tx.Commit();
-            }
-
-            TaskDialog.Show("LiraSlabZones",
-                $"Размещено: {placed} из {analysis.Zones.Count}\n" +
-                $"Семейство (из проекта): {symbol.FamilyName}\n" +
-                $"User cfg: {AppConfig.UserConfigPath}\n" +
-                $"JSON: {outPath}");
+            ZonePlacementService.PlaceWithPrompt(app, symbol, analysis);
         }
     }
 }

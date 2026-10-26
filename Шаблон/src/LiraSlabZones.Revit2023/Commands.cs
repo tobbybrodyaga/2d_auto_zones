@@ -51,21 +51,7 @@ namespace LiraSlabZones.Revit2023
                 analysis.Settings.FamilyStraight = symbol.FamilyName;
                 AppConfig.SaveUserSettings(analysis.Settings);
 
-                int placed;
-                using (var tx = new Transaction(doc, "Раскладка зон доп.армирования (ЛИРА)"))
-                {
-                    tx.Start();
-                    if (!symbol.IsActive) symbol.Activate();
-                    placed = ZonePlacer.Place(doc, symbol, analysis);
-                    tx.Commit();
-                }
-
-                TaskDialog.Show("LiraSlabZones",
-                    $"Размещено экземпляров: {placed}\n" +
-                    $"Зон в JSON: {analysis.Zones.Count}\n" +
-                    $"Семейство (из проекта): {symbol.FamilyName}\n" +
-                    $"User cfg: {AppConfig.UserConfigPath}");
-
+                ZonePlacementService.PlaceWithPrompt(commandData.Application, symbol, analysis);
                 return Result.Succeeded;
             }
             catch (Exception ex)
@@ -110,22 +96,7 @@ namespace LiraSlabZones.Revit2023
                 var analysis = analyzer.Analyze(null, settings);
                 SlabZoneAnalyzer.SaveJson(analysis, outputPath);
 
-                int placed;
-                using (var tx = new Transaction(doc, "Анализ ЛИРА + раскладка зон"))
-                {
-                    tx.Start();
-                    if (!symbol.IsActive) symbol.Activate();
-                    placed = ZonePlacer.Place(doc, symbol, analysis);
-                    tx.Commit();
-                }
-
-                TaskDialog.Show("LiraSlabZones",
-                    $"Документ ЛИРА: {analysis.DocumentName}\n" +
-                    $"Пластин: {analysis.PlateCount}, зон: {analysis.Zones.Count}\n" +
-                    $"Размещено в Revit: {placed}\n" +
-                    $"Семейство (из проекта): {symbol.FamilyName}\n" +
-                    $"JSON: {outputPath}");
-
+                ZonePlacementService.PlaceWithPrompt(commandData.Application, symbol, analysis);
                 return Result.Succeeded;
             }
             catch (Exception ex)

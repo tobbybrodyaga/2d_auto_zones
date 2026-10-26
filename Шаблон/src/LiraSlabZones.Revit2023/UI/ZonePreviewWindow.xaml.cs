@@ -228,7 +228,9 @@ namespace LiraSlabZones.Revit2023.UI
             var editable = result != null && (patchMode
                 ? Viewport.EditableZoneCount > 0 || result.Patches.Count > 0
                 : result.Zones.Count > 0);
-            BtnPlace.IsEnabled = _placeCallback != null && editable && !patchMode;
+            // Зоны пересчитываются холстом при любой смене настроек, поэтому наличие зон
+            // проверяется в момент нажатия (BtnPlace_Click), а не здесь.
+            BtnPlace.IsEnabled = _placeCallback != null && result?.Plates?.Count > 0;
             BtnBoundaryEditor.IsEnabled = result?.Plates?.Count > 0;
             BtnApplyBoundaryRules.IsEnabled = result?.Plates?.Count > 0;
             BtnSaveJson.Content = result?.PatchPreviewOnly == true
@@ -848,7 +850,14 @@ namespace LiraSlabZones.Revit2023.UI
 
         private void BtnPlace_Click(object sender, RoutedEventArgs e)
         {
-            if (_result == null || _placeCallback == null || _result.PatchPreviewOnly || _result.Zones.Count == 0) return;
+            if (_result == null || _placeCallback == null) return;
+            var zones = Viewport.PlacementZones;
+            if (zones.Count == 0)
+            {
+                Log("Нет зон для размещения в Revit.", "warn");
+                return;
+            }
+            _result.Zones = zones;
             _result.Settings = ReadSettingsFromUi();
             _placeCallback(_result);
         }
