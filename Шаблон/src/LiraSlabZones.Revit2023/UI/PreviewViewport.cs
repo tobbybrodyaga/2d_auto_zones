@@ -264,33 +264,19 @@ namespace LiraSlabZones.Revit2023.UI
 
         private Point Tx(Point3 p) => Tx(p.X, p.Y);
 
+        // То же преобразование использует ZonePlacer при вставке в Revit.
+        private LiraRevitTransform Transform => new LiraRevitTransform(_settings, _pivotX, _pivotY);
+
         private Point Tx(double x, double y)
         {
-            double ox = _settings?.OffsetXM ?? 0;
-            double oy = _settings?.OffsetYM ?? 0;
-            double deg = _settings?.RotationDeg ?? 0;
-            if (Math.Abs(deg) < 1e-9 && Math.Abs(ox) < 1e-12 && Math.Abs(oy) < 1e-12)
-                return new Point(x, y);
-
-            double rad = deg * Math.PI / 180.0;
-            double c = Math.Cos(rad), s = Math.Sin(rad);
-            double dx = x - _pivotX, dy = y - _pivotY;
-            return new Point(c * dx - s * dy + _pivotX + ox, s * dx + c * dy + _pivotY + oy);
+            var (rx, ry) = Transform.ToRevit(x, y);
+            return new Point(rx, ry);
         }
 
         private Point3 UnTx(double x, double y)
         {
-            double ox = _settings?.OffsetXM ?? 0;
-            double oy = _settings?.OffsetYM ?? 0;
-            double deg = _settings?.RotationDeg ?? 0;
-            double xr = x - ox, yr = y - oy;
-            if (Math.Abs(deg) < 1e-9)
-                return new Point3(xr, yr, 0);
-
-            double rad = -deg * Math.PI / 180.0;
-            double c = Math.Cos(rad), s = Math.Sin(rad);
-            double dx = xr - _pivotX, dy = yr - _pivotY;
-            return new Point3(c * dx - s * dy + _pivotX, s * dx + c * dy + _pivotY, 0);
+            var (lx, ly) = Transform.ToLira(x, y);
+            return new Point3(lx, ly, 0);
         }
 
         private double _pivotX, _pivotY;
@@ -473,6 +459,7 @@ namespace LiraSlabZones.Revit2023.UI
                 DrawPatchElementValues(dc, s, vMinX, vMaxX, vMinY, vMaxY);
                 DrawPatchZoneLabels(dc, s, vMinX, vMaxX, vMinY, vMaxY);
                 DrawAxes(dc, s, penW);
+                DrawRevitGrids(dc, s);
                 dc.Pop();
                 DrawElevationBadge(dc);
                 DrawDiameterLegend(dc);
@@ -585,6 +572,7 @@ namespace LiraSlabZones.Revit2023.UI
 
             // оси из ЛИРА
             DrawAxes(dc, s, penW);
+                DrawRevitGrids(dc, s);
 
             dc.Pop();
 
@@ -691,6 +679,65 @@ namespace LiraSlabZones.Revit2023.UI
                     1.0);
                 dc.DrawText(label, new Point(x + 34, rowY + 2));
             }
+        }
+
+        /// <summary>
+        /// Оси из связанного плана Revit. Они уже в координатах Revit, как и холст после Tx,
+        /// поэтому рисуются без преобразования — так видно, совпадает ли план ЛИРЫ с осями.
+        /// </summary>
+        private void DrawRevitGrids(DrawingContext dc, double s)
+        {
+            var grids = _result?.RevitLink?.Grids;
+            if (grids == null || grids.Count == 0 || _modelMinX > _modelMaxX) return;
+
+            var span = Math.Max(_modelMaxX - _modelMinX, _modelMaxY - _modelMinY);
+            var margin = span * 0.06 + 0.6;
+            double x0 = _modelMinX - margin, x1 = _modelMaxX + margin;
+            double y0 = _modelMinY - margin, y1 = _modelMaxY + margin;
+
+            var color = Color.FromRgb(185, 28, 28);
+            var pen = new Pen(new SolidColorBrush(color), Math.Max(1e-4, 1.1 / s))
+            {
+                DashStyle = DashStyles.DashDot
+            };
+            pen.Freeze();
+            var bubblePen = new Pen(new SolidColorBrush(color), Math.Max(1e-4, 1.1 / s));
+            bubblePen.Freeze();
+            var typeface = new Typeface("Segoe UI");
+            var r = Math.Max(0.18, Math.Min(0.55, 13.0 / s));
+
+            foreach (var grid in grids)
+            {
+                if (!ClipSegment(grid.X1, grid.Y1, grid.X2, grid.Y2, x0, x1, y0, y1, out var a, out var b))
+                    continue;
+                dc.DrawLine(pen, a, b);
+                // Кружок — на верхнем конце почти вертикальной оси и на левом конце горизонтальной.
+                var vertical = Math.Abs(b.Y - a.Y) >= Math.Abs(b.X - a.X);
+                var bubble = vertical ? (a.Y > b.Y ? a : b) : (a.X < b.X ? a : b);
+                DrawAxisBubble(dc, bubble, grid.Name, r, Brushes.White, bubblePen, typeface, s);
+            }
+        }
+
+        /// <summary>Отсечение отрезка прямоугольником (Лианг — Барски).</summary>
+        private static bool ClipSegment(double ax, double ay, double bx, double by,
+            double minX, double maxX, double minY, double maxY, out Point a, out Point b)
+        {
+            double t0 = 0, t1 = 1, dx = bx - ax, dy = by - ay;
+            bool Clip(double p, double q)
+            {
+                if (Math.Abs(p) < 1e-12) return q >= 0;
+                var t = q / p;
+                if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; }
+                else { if (t < t0) return false; if (t < t1) t1 = t; }
+                return true;
+            }
+            a = b = default;
+            if (!Clip(-dx, ax - minX) || !Clip(dx, maxX - ax) ||
+                !Clip(-dy, ay - minY) || !Clip(dy, maxY - ay))
+                return false;
+            a = new Point(ax + t0 * dx, ay + t0 * dy);
+            b = new Point(ax + t1 * dx, ay + t1 * dy);
+            return true;
         }
 
         private void DrawAxes(DrawingContext dc, double s, double penW)
@@ -1910,16 +1957,8 @@ namespace LiraSlabZones.Revit2023.UI
             _pivotX = _pivotY = 0;
             if (_result == null) return;
 
-            // pivot = центр исходной геометрии (до поворота)
-            double sx = 0, sy = 0;
-            int n = 0;
-            void AccRaw(Point3 p) { sx += p.X; sy += p.Y; n++; }
-            if (_result.Outline != null)
-                foreach (var p in _result.Outline) AccRaw(p);
-            foreach (var plate in _result.Plates)
-            foreach (var p in plate.Contour)
-                AccRaw(p);
-            if (n > 0) { _pivotX = sx / n; _pivotY = sy / n; }
+            // pivot = центр исходной геометрии (до поворота), как при вставке в Revit
+            (_pivotX, _pivotY) = LiraRevitTransform.ComputePivot(_result);
 
             void Acc(Point3 p)
             {

@@ -249,6 +249,10 @@
             <ComboBox x:Name="CmbLevels" Height="26" Margin="0,0,0,6"/>
             <Button Content="Загрузить уровни из ЛИРЫ" Style="{StaticResource SecondaryBtn}" Click="BtnLoadLevels_Click"/>
             <Button Content="Взять плиту ближайшую к уровню" Style="{StaticResource PrimaryBtn}" Click="BtnApplyLevel_Click"/>
+            <Button x:Name="BtnLinkRevit" Content="Связать с Revit: планы и оси" Style="{StaticResource SecondaryBtn}"
+                    Click="BtnLinkRevit_Click" IsEnabled="False"
+                    ToolTip="Создаёт в Revit планы несущих конструкций для этой отметки (по одному на ряд) и берёт с них оси"/>
+            <TextBlock x:Name="TxtRevitLink" Text="Связь с Revit: нет" TextWrapping="Wrap" Foreground="#6B7280" Margin="0,4,0,0"/>
           </StackPanel>
         </GroupBox>
 

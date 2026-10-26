@@ -9,8 +9,7 @@ namespace LiraSlabZones.Revit2023
     internal sealed class ZonePlacementReport
     {
         public int Placed { get; set; }
-        public int PlacedBottom { get; set; }
-        public int PlacedTop { get; set; }
+        public Dictionary<RebarLayer, int> PlacedByLayer { get; } = new Dictionary<RebarLayer, int>();
         public List<string> Failures { get; } = new List<string>();
     }
 
@@ -19,11 +18,11 @@ namespace LiraSlabZones.Revit2023
         private const double MetersToFeet = UnitConversion.MetersToFeet;
 
         /// <summary>
-        /// Семейства SUM-30…34 — «Элементы узлов» (привязаны к виду). Нижние слои As1/As2
-        /// ставятся на план низа, верхние As3/As4 — на план верха.
+        /// Семейства SUM-30…34 — «Элементы узлов» (привязаны к виду): каждая зона ставится
+        /// на план своего ряда армирования.
         /// </summary>
         public static ZonePlacementReport Place(Document doc, FamilySymbol? defaultSymbol, AnalysisResult analysis,
-            View bottomView, View topView)
+            Func<RebarLayer, View?> viewForLayer)
         {
             var report = new ZonePlacementReport();
             if (analysis.Zones == null || analysis.Zones.Count == 0)
@@ -37,6 +36,7 @@ namespace LiraSlabZones.Revit2023
                     "Разделите эти зоны в предпросмотре перед размещением.");
 
             var settings = analysis.Settings ?? AppConfig.LoadEffectiveSettings();
+            var transform = LiraRevitTransform.For(analysis, settings);
             var cache = new Dictionary<string, FamilySymbol?>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var group in analysis.Zones.GroupBy(z =>
@@ -65,17 +65,18 @@ namespace LiraSlabZones.Revit2023
 
                 foreach (var zone in group)
                 {
-                    var isTop = zone.Layer is RebarLayer.As3 or RebarLayer.As4;
-                    var view = isTop ? topView : bottomView;
-                    var error = PlaceOne(doc, symbol, view, zone, settings);
+                    var view = viewForLayer(zone.Layer);
+                    var error = view == null
+                        ? "нет плана для этого ряда"
+                        : PlaceOne(doc, symbol, view, zone, settings, transform);
                     if (error != null)
                     {
                         report.Failures.Add($"зона {zone.ZoneId} ({zone.Layer}, {familyName}): {error}");
                         continue;
                     }
                     report.Placed++;
-                    if (isTop) report.PlacedTop++;
-                    else report.PlacedBottom++;
+                    report.PlacedByLayer[zone.Layer] =
+                        report.PlacedByLayer.TryGetValue(zone.Layer, out var count) ? count + 1 : 1;
                 }
             }
 
@@ -88,22 +89,11 @@ namespace LiraSlabZones.Revit2023
             FamilySymbol symbol,
             View view,
             AdditionalZone zone,
-            AnalysisSettings settings)
+            AnalysisSettings settings,
+            LiraRevitTransform transform)
         {
-            var ox = settings.OffsetXM;
-            var oy = settings.OffsetYM;
-            var px = zone.Placement.X + ox;
-            var py = zone.Placement.Y + oy;
-            if (Math.Abs(settings.RotationDeg) > 1e-9)
-            {
-                var rad = settings.RotationDeg * Math.PI / 180.0;
-                var cos = Math.Cos(rad);
-                var sin = Math.Sin(rad);
-                var x0 = zone.Placement.X;
-                var y0 = zone.Placement.Y;
-                px = x0 * cos - y0 * sin + ox;
-                py = x0 * sin + y0 * cos + oy;
-            }
+            // То же преобразование, что и в предпросмотре (поворот вокруг центра плиты + сдвиг).
+            var (px, py) = transform.ToRevit(zone.Placement.X, zone.Placement.Y);
 
             // Элемент узла лежит в плоскости вида; высотная отметка ЛИРЫ здесь не нужна.
             var z = (view as ViewPlan)?.GenLevel?.ProjectElevation ?? 0;

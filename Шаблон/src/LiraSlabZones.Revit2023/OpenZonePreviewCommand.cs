@@ -44,7 +44,17 @@ namespace LiraSlabZones.Revit2023
                     _window.SetProjectFamilies(FamilyLoader.ListFamilyNames(doc), settings.FamilyStraight);
                     // ExternalEvent создаётся только в контексте Revit API — здесь, а не в обработчике кнопки.
                     _queue ??= new RevitActionQueue();
-                    _window.SetPlaceCallback(result => _queue.Run(app => PlaceIntoRevit(app, result)));
+                    var queue = _queue;
+                    _window.SetPlaceCallback(result => queue.Run(app =>
+                    {
+                        var link = PlaceIntoRevit(app, result);
+                        if (link != null) _window?.ApplyRevitLink(link);
+                    }));
+                    _window.SetLinkCallback(result => queue.Run(app =>
+                    {
+                        var link = RevitLinkService.Link(app, result);
+                        if (link != null) _window?.ApplyRevitLink(link);
+                    }));
                 }
 
                 _window.Closed += (_, __) => _window = null;
@@ -63,10 +73,10 @@ namespace LiraSlabZones.Revit2023
             }
         }
 
-        private static void PlaceIntoRevit(UIApplication app, AnalysisResult analysis)
+        private static RevitLinkInfo? PlaceIntoRevit(UIApplication app, AnalysisResult analysis)
         {
             var doc = app.ActiveUIDocument?.Document;
-            if (doc == null) return;
+            if (doc == null) return null;
             AppConfig.SaveUserSettings(analysis.Settings);
 
             var familyName = analysis.Settings.FamilyStraight;
@@ -81,16 +91,18 @@ namespace LiraSlabZones.Revit2023
                 }
                 catch (OperationCanceledException)
                 {
-                    return;
+                    return null;
                 }
             }
 
+            var link = ZonePlacementService.PlaceWithPrompt(app, symbol, analysis);
+
+            // JSON сохраняется после размещения, чтобы в нём была и связь с Revit.
             var root = SolutionPaths.FindRoot();
             var outPath = Path.Combine(root, "output", "slab_zones.json");
             Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
             SlabZoneAnalyzer.SaveJson(analysis, outPath);
-
-            ZonePlacementService.PlaceWithPrompt(app, symbol, analysis);
+            return link;
         }
     }
 }

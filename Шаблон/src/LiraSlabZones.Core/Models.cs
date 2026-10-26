@@ -200,6 +200,42 @@ namespace LiraSlabZones.Core
         public double Y2 { get; set; }
     }
 
+    /// <summary>Ось из проекта Revit. Координаты — внутренняя система Revit, м (не ЛИРА).</summary>
+    public sealed class RevitGridLine
+    {
+        public string Name { get; set; } = string.Empty;
+        public long ElementId { get; set; }
+        public double X1 { get; set; }
+        public double Y1 { get; set; }
+        public double X2 { get; set; }
+        public double Y2 { get; set; }
+    }
+
+    /// <summary>План несущих конструкций, созданный для одного ряда армирования.</summary>
+    public sealed class RevitLayerPlan
+    {
+        public RebarLayer Layer { get; set; }
+        public string ViewName { get; set; } = string.Empty;
+        public long ViewId { get; set; }
+    }
+
+    /// <summary>Связь отметки ЛИРЫ с уровнем и планами Revit.</summary>
+    public sealed class RevitLinkInfo
+    {
+        public string DocumentTitle { get; set; } = string.Empty;
+        /// <summary>Отметка плиты в программе (ЛИРА), м — по ней связь проверяется при пересчёте.</summary>
+        public double LiraElevationZM { get; set; }
+        public string LevelName { get; set; } = string.Empty;
+        public long LevelId { get; set; }
+        public double LevelElevationM { get; set; }
+        public List<RevitLayerPlan> Plans { get; set; } = new List<RevitLayerPlan>();
+        public List<RevitGridLine> Grids { get; set; } = new List<RevitGridLine>();
+        public int SkippedGrids { get; set; }
+        public DateTime LinkedUtc { get; set; } = DateTime.UtcNow;
+
+        public bool Matches(double elevationZM) => Math.Abs(LiraElevationZM - elevationZM) < 0.001;
+    }
+
     /// <summary>Уровень / отметка из ЛИРА или из Z-корзин КЭ.</summary>
     public sealed class ElevationLevelInfo
     {
@@ -233,6 +269,8 @@ namespace LiraSlabZones.Core
         public List<ZonePatch> Patches { get; set; } = new List<ZonePatch>();
         public bool PatchPreviewOnly { get; set; }
         public List<ConstructionAxis> Axes { get; set; } = new List<ConstructionAxis>();
+        /// <summary>Связь с проектом Revit: уровень, планы по рядам и оси. null — не связано.</summary>
+        public RevitLinkInfo? RevitLink { get; set; }
         public List<ElevationLevelInfo> AvailableLevels { get; set; } = new List<ElevationLevelInfo>();
 
         [Newtonsoft.Json.JsonProperty("Levels")]

@@ -19,6 +19,9 @@ namespace LiraSlabZones.Revit2023.UI
         private AnalysisResult? _result;
         private List<LiraPlateElement> _plates = new List<LiraPlateElement>();
         private Action<AnalysisResult>? _placeCallback;
+        private Action<AnalysisResult>? _linkCallback;
+        /// <summary>Связь с Revit живёт дольше одного результата: пересчёт создаёт новый AnalysisResult.</summary>
+        private RevitLinkInfo? _revitLink;
         private bool _suppressUiEvents;
         private bool _updatingBoundaryToggle;
         private bool _busy;
@@ -222,6 +225,45 @@ namespace LiraSlabZones.Revit2023.UI
             UpdatePreviewModeControls(_result);
         }
 
+        public void SetLinkCallback(Action<AnalysisResult> callback)
+        {
+            _linkCallback = callback;
+            UpdatePreviewModeControls(_result);
+        }
+
+        /// <summary>Принять связь с Revit (уровень, планы, оси) и показать оси на холсте.</summary>
+        public void ApplyRevitLink(RevitLinkInfo link)
+        {
+            _revitLink = link;
+            PushToViewport(fitView: false);
+            Log($"Связь с Revit: уровень «{link.LevelName}», планов {link.Plans.Count}, осей {link.Grids.Count}" +
+                (link.SkippedGrids > 0 ? $" (пропущено дуговых/составных: {link.SkippedGrids})" : ""), "ok");
+        }
+
+        /// <summary>Подставить связь в текущий результат, если отметка та же; иначе связь не действует.</summary>
+        private void AttachRevitLink()
+        {
+            if (_result == null) return;
+            if (_result.RevitLink != null && !ReferenceEquals(_result.RevitLink, _revitLink) &&
+                _result.RevitLink.Matches(_result.ElevationZM))
+                _revitLink = _result.RevitLink; // пришла из загруженного JSON
+            _result.RevitLink = _revitLink != null && _revitLink.Matches(_result.ElevationZM) ? _revitLink : null;
+
+            var link = _result.RevitLink;
+            TxtRevitLink.Text = link == null
+                ? _revitLink == null
+                    ? "Связь с Revit: нет"
+                    : $"Связь с Revit: для отметки {RevitLinkRules.FormatElevation(_revitLink.LiraElevationZM)}, не для текущей"
+                : $"Связь с Revit: «{link.LevelName}», планов {link.Plans.Count}, осей {link.Grids.Count}";
+        }
+
+        private void BtnLinkRevit_Click(object sender, RoutedEventArgs e)
+        {
+            if (_result == null || _linkCallback == null) return;
+            _result.Settings = ReadSettingsFromUi();
+            _linkCallback(_result);
+        }
+
         private void UpdatePreviewModeControls(AnalysisResult? result)
         {
             var patchMode = result?.PatchPreviewOnly == true;
@@ -231,6 +273,7 @@ namespace LiraSlabZones.Revit2023.UI
             // Зоны пересчитываются холстом при любой смене настроек, поэтому наличие зон
             // проверяется в момент нажатия (BtnPlace_Click), а не здесь.
             BtnPlace.IsEnabled = _placeCallback != null && result?.Plates?.Count > 0;
+            BtnLinkRevit.IsEnabled = _linkCallback != null && result?.Plates?.Count > 0;
             BtnBoundaryEditor.IsEnabled = result?.Plates?.Count > 0;
             BtnApplyBoundaryRules.IsEnabled = result?.Plates?.Count > 0;
             BtnSaveJson.Content = result?.PatchPreviewOnly == true
@@ -370,6 +413,7 @@ namespace LiraSlabZones.Revit2023.UI
         private void PushToViewport(bool fitView = true)
         {
             if (_result == null) return;
+            AttachRevitLink();
             Viewport.SetData(
                 _result,
                 ReadSettingsFromUi(),
