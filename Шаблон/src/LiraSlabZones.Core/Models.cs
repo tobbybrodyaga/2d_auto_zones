@@ -391,6 +391,9 @@ namespace LiraSlabZones.Core
         public string FamilyPDiff { get; set; } = "SUM-33-Зона дополнительного армирования П-образная разнополочная";
         public string FamilyBentStick { get; set; } = "SUM-34-Зона дополнительного армирования Гнутый стержень";
 
+        /// <summary>Шаблон вида для планов доп. армирования; пусто — оставить шаблон типа вида.</summary>
+        public string RevitPlanTemplateName { get; set; } = "SP_О_АРМ";
+
         /// <summary>Синоним FamilyStraight (совместимость JSON).</summary>
         public string FamilyName
         {

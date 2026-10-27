@@ -44,6 +44,12 @@ namespace LiraSlabZones.Revit2023
                        "Будут созданы (или использованы существующие) планы:\n" +
                        string.Join("\n", layers.Select(layer =>
                            "• " + RevitLinkRules.PlanName(layer, settings.ReverseZoneDirections, elevation)));
+            var templateName = AppConfig.LoadEffectiveSettings().RevitPlanTemplateName?.Trim();
+            info += "\n\nШаблон вида: " + (string.IsNullOrEmpty(templateName)
+                ? "не задан — останется шаблон типа вида"
+                : FindPlanTemplate(doc) != null
+                    ? templateName
+                    : $"«{templateName}» не найден в проекте — останется шаблон типа вида");
             var items = levels.Select(level =>
             {
                 var levelM = UnitConversion.FeetToMeters(level.Elevation);
@@ -98,6 +104,7 @@ namespace LiraSlabZones.Revit2023
                 .Where(view => !view.IsTemplate)
                 .GroupBy(view => view.Name)
                 .ToDictionary(group => group.Key, group => group.First());
+            var template = FindPlanTemplate(doc);
 
             foreach (var layer in layers)
             {
@@ -107,8 +114,24 @@ namespace LiraSlabZones.Revit2023
                     plan = ViewPlan.Create(doc, planType.Id, level.Id);
                     plan.Name = name;
                 }
+                if (template != null && plan.ViewTemplateId != template.Id && plan.IsValidViewTemplate(template.Id))
+                    plan.ViewTemplateId = template.Id;
                 yield return new RevitLayerPlan { Layer = layer, ViewName = name, ViewId = RevitIds.Value(plan.Id) };
             }
+        }
+
+        /// <summary>
+        /// Шаблон берётся из LiraSlabZones.cfg (RevitPlanTemplateName), а не из настроек окна:
+        /// окно его не редактирует. Нет такого шаблона — остаётся шаблон типа вида.
+        /// </summary>
+        public static View? FindPlanTemplate(Document doc)
+        {
+            var name = AppConfig.LoadEffectiveSettings().RevitPlanTemplateName?.Trim();
+            if (string.IsNullOrEmpty(name)) return null;
+            return new FilteredElementCollector(doc)
+                .OfClass(typeof(View))
+                .Cast<View>()
+                .FirstOrDefault(view => view.IsTemplate && view.Name == name);
         }
 
         /// <summary>Оси, видимые на первом плане связи; дуговые и составные оси пропускаются.</summary>
