@@ -17,7 +17,7 @@ namespace LiraSlabZones.Core
         private const double RmsToleranceM = 0.05;
         private const double GridSnapDeg = 0.3;
 
-        public static RevitRegistration? Solve(AnalysisResult result, RevitLinkInfo link)
+        public static RevitRegistration? Solve(AnalysisResult result, RevitLinkInfo link, List<string>? trace = null)
         {
             var sourceEdges = SourceEdges(result);
             var source = Sample(sourceEdges, SourceStepM);
@@ -30,9 +30,20 @@ namespace LiraSlabZones.Core
             var index = new SegmentIndex(target, 0.5);
 
             Fit? best = null;
-            foreach (var guess in InitialGuesses(result, sourceEdges, source, target))
+            var guesses = InitialGuesses(result, sourceEdges, source, target)
+                .Select(guess => (Guess: guess, StartDist: 10.0)).ToList();
+            // Плита ЛИРЫ может быть частью перекрытия Revit (блок здания) — центры тогда
+            // не совпадают, поэтому дополнительно перебираются сдвиги по всему перекрытию.
+            guesses.AddRange(CoarseSearch(source, target, index,
+                    guesses.Select(g => g.Guess.Theta).Distinct().ToList())
+                .Select(guess => (Guess: guess, StartDist: 1.0)));
+            foreach (var (guess, startDist) in guesses)
             {
-                var fit = Icp(source, index, guess.Theta, guess.Tx, guess.Ty, fixedRotation: false);
+                var fit = Icp(source, index, guess.Theta, guess.Tx, guess.Ty, fixedRotation: false, startDist);
+                trace?.Add(FormattableString.Invariant(
+                    $"старт {guess.Theta * 180 / Math.PI:0.###}° ({guess.Tx:0.##}; {guess.Ty:0.##}) r={startDist} → ") +
+                    (fit == null ? "нет" : FormattableString.Invariant(
+                        $"{fit.Theta * 180 / Math.PI:0.###}° ({fit.Tx:0.###}; {fit.Ty:0.###}) доля {fit.Share:0.###} СКО {fit.RmsM * 1000:0.#} мм")));
                 if (fit != null && (best == null || fit.Better(best))) best = fit;
             }
             if (best == null) return null;
@@ -45,7 +56,7 @@ namespace LiraSlabZones.Core
                 var delta = WrapQuarter(gridAngle - best.Theta);
                 if (Math.Abs(delta) > 1e-9 && Math.Abs(delta) < GridSnapDeg * Math.PI / 180)
                 {
-                    var fixedFit = Icp(source, index, best.Theta + delta, best.Tx, best.Ty, fixedRotation: true);
+                    var fixedFit = Icp(source, index, best.Theta + delta, best.Tx, best.Ty, fixedRotation: true, 0.2);
                     if (fixedFit != null && fixedFit.RmsM <= best.RmsM + 0.003 &&
                         fixedFit.Share >= best.Share - 0.05)
                     {
@@ -118,12 +129,57 @@ namespace LiraSlabZones.Core
             }
         }
 
-        private static Fit? Icp(List<Point3> source, SegmentIndex index, double theta, double tx, double ty,
-            bool fixedRotation)
+        /// <summary>
+        /// Перебор сдвигов с шагом 0,5 м при каждом кандидате поворота: оценка — сколько
+        /// из ~200 точек контура ЛИРЫ лежит не дальше 0,35 м от кромок. Лучшие — в ICP.
+        /// </summary>
+        private static IEnumerable<Guess> CoarseSearch(List<Point3> source, List<Edge> target,
+            SegmentIndex index, List<double> thetas)
         {
-            var maxDist = 10.0;
+            const double step = 0.5, near = 0.35;
+            var stride = Math.Max(1, source.Count / 200);
+            var sparse = source.Where((_, i) => i % stride == 0).ToList();
+            double tMinX = target.Min(e => Math.Min(e.Ax, e.Bx)), tMaxX = target.Max(e => Math.Max(e.Ax, e.Bx));
+            double tMinY = target.Min(e => Math.Min(e.Ay, e.By)), tMaxY = target.Max(e => Math.Max(e.Ay, e.By));
+            var found = new List<(Guess Guess, int Score)>();
+            foreach (var theta in thetas)
+            {
+                double cos = Math.Cos(theta), sin = Math.Sin(theta);
+                var rotated = sparse.Select(p => (X: cos * p.X - sin * p.Y, Y: sin * p.X + cos * p.Y)).ToList();
+                double rMinX = rotated.Min(p => p.X), rMaxX = rotated.Max(p => p.X);
+                double rMinY = rotated.Min(p => p.Y), rMaxY = rotated.Max(p => p.Y);
+                double x0 = Math.Min(tMinX - rMinX, tMaxX - rMaxX) - 2, x1 = Math.Max(tMinX - rMinX, tMaxX - rMaxX) + 2;
+                double y0 = Math.Min(tMinY - rMinY, tMaxY - rMaxY) - 2, y1 = Math.Max(tMinY - rMinY, tMaxY - rMaxY) + 2;
+                var local = new List<(Guess Guess, int Score)>();
+                for (var tx = x0; tx <= x1; tx += step)
+                for (var ty = y0; ty <= y1; ty += step)
+                {
+                    var score = 0;
+                    foreach (var p in rotated)
+                        if (index.Nearest(p.X + tx, p.Y + ty, near, out _, out _, out _)) score++;
+                    if (score >= sparse.Count / 4) local.Add((new Guess(theta, tx, ty), score));
+                }
+                // Лучшие и не соседние друг с другом (дальше 2 м).
+                foreach (var candidate in local.OrderByDescending(c => c.Score))
+                {
+                    if (found.Count(f => f.Guess.Theta == theta) >= 4) break;
+                    if (found.Any(f => f.Guess.Theta == theta &&
+                                       Math.Abs(f.Guess.Tx - candidate.Guess.Tx) < 2 &&
+                                       Math.Abs(f.Guess.Ty - candidate.Guess.Ty) < 2))
+                        continue;
+                    found.Add(candidate);
+                }
+            }
+            return found.Select(f => f.Guess);
+        }
+
+        private static Fit? Icp(List<Point3> source, SegmentIndex index, double theta, double tx, double ty,
+            bool fixedRotation, double startDist = 10.0)
+        {
+            var maxDist = startDist;
+            var floor = Math.Min(startDist, 0.3);
             var pairs = new List<(double Ax, double Ay, double Bx, double By, double D)>(source.Count);
-            for (var iteration = 0; iteration < 80; iteration++)
+            for (var iteration = 0; iteration < 120; iteration++)
             {
                 double cos = Math.Cos(theta), sin = Math.Sin(theta);
                 pairs.Clear();
@@ -156,11 +212,18 @@ namespace LiraSlabZones.Core
                 var change = Math.Abs(newTheta - theta) * 50 + Math.Abs(newTx - tx) + Math.Abs(newTy - ty);
                 theta = newTheta; tx = newTx; ty = newTy;
 
+                // Радиус не сужается ниже 0,3 м до сходимости: большинство точек скользит вдоль
+                // длинных кромок с нулевой ошибкой, и медиана иначе отсекла бы короткие кромки,
+                // которые одни фиксируют сдвиг вдоль длинных. Потом — уточнение при 0,05 м.
                 var median = pairs.Select(p => p.D).OrderBy(d => d).ElementAt(pairs.Count / 2);
-                var newMax = Math.Max(0.05, Math.Min(maxDist, 3 * median + 0.02));
+                var newMax = Math.Max(floor, Math.Min(maxDist, 3 * median + 0.02));
                 var shrunk = newMax < maxDist - 1e-6;
                 maxDist = newMax;
-                if (change < 1e-6 && !shrunk) break;
+                if (change < 1e-6 && !shrunk)
+                {
+                    if (floor <= 0.05) break;
+                    floor = 0.05;
+                }
             }
 
             double c = Math.Cos(theta), si = Math.Sin(theta);

@@ -115,8 +115,11 @@ namespace LiraSlabZones.Revit2023
                     outline.AreaM2 += face.Area * squareFeetToM2;
                     if (face.Area > topArea)
                     {
+                        // Геометрия — во внутренних координатах, а отметки уровней — от базы
+                        // проекта: верх = отметка уровня + (Z грани − Z уровня во внутренних).
                         topArea = face.Area;
-                        outline.TopM = UnitConversion.FeetToMeters(face.Origin.Z);
+                        outline.TopM = UnitConversion.FeetToMeters(
+                            level.Elevation + face.Origin.Z - level.ProjectElevation);
                     }
                     foreach (var loop in face.GetEdgesAsCurveLoops())
                     {

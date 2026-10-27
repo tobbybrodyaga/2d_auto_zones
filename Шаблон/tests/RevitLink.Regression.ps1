@@ -158,6 +158,28 @@ Check ($liraAxes.Count -eq 3) "все 3 оси Revit параллельны ос
 $ax2 = $liraAxes | Where-Object Name -eq '2'
 Check ([Math]::Abs($ax2.PositionAt(10) - 6) -lt 0.0005) ("ось 2 в координатах ЛИРЫ: X = {0:0.####}" -f $ax2.PositionAt(10))
 
+Write-Host '5б. Плита ЛИРЫ — часть общего перекрытия Revit (блок здания)'
+$wide = [LiraSlabZones.Core.RevitLinkInfo]::new()
+$wideFloor = [LiraSlabZones.Core.RevitFloorOutline]::new()
+# Перекрытие продолжается на 40 м вправо: правой кромки плиты ЛИРЫ в Revit нет.
+$wideFloor.Loops.Add((Points (@(@(-40, 0), @(70, 0), @(70, 12), @(18, 12), @(18, 20), @(0, 20), @(0, 30), @(-40, 30)) |
+    ForEach-Object { ,(ToRevit $_[0] $_[1]) })))
+$wide.Floors.Add($wideFloor)
+foreach ($g in $link.Grids) { $wide.Grids.Add($g) }
+$block = [LiraSlabZones.Core.AnalysisResult]::new()
+$block.Outline = $liraOutline
+$reg = [LiraSlabZones.Core.RevitRegistrationSolver]::Solve($block, $wide)
+Check ($null -ne $reg -and $reg.Reliable) "совмещение найдено: $($reg.Summary)"
+if ($reg) {
+    $block.Settings.RotationDeg = $reg.RotationDeg
+    $block.Settings.OffsetXM = $reg.OffsetXM
+    $block.Settings.OffsetYM = $reg.OffsetYM
+    $tr = [LiraSlabZones.Core.LiraRevitTransform]::For($block, $block.Settings)
+    $got = $tr.ToRevit(18, 20); $want = ToRevit 18 20
+    $err = [Math]::Sqrt([Math]::Pow($got.Item1 - $want[0], 2) + [Math]::Pow($got.Item2 - $want[1], 2))
+    Check ($err -lt 0.001) ("угол (18; 20) ложится в Revit с ошибкой {0:0.###} мм" -f ($err * 1000))
+}
+
 if ($RealSlabJson -and $RealRevitJson) {
     Write-Host '6. Реальная плита: совмещение с перекрытиями Revit и привязка к осям'
     $real = [Newtonsoft.Json.JsonConvert]::DeserializeObject((Get-Content $RealSlabJson -Raw -Encoding UTF8),
