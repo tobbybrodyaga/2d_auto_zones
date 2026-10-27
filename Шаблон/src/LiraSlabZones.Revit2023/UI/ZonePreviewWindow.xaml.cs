@@ -235,9 +235,45 @@ namespace LiraSlabZones.Revit2023.UI
         public void ApplyRevitLink(RevitLinkInfo link)
         {
             _revitLink = link;
+            var registration = link.Registration;
+            if (registration != null && registration.Reliable)
+            {
+                // Поворот и сдвиг — с точностью до долей мм: 0,01° на 50 м — это уже 9 мм.
+                _suppressUiEvents = true;
+                try { SetTransformText(registration.RotationDeg, registration.OffsetXM, registration.OffsetYM); }
+                finally { _suppressUiEvents = false; }
+            }
             PushToViewport(fitView: false);
-            Log($"Связь с Revit: уровень «{link.LevelName}», планов {link.Plans.Count}, осей {link.Grids.Count}" +
+
+            Log($"Связь с Revit: уровень «{link.LevelName}», планы на отметке " +
+                $"{RevitLinkRules.FormatElevation(link.PlanElevationM)}, планов {link.Plans.Count}, осей {link.Grids.Count}" +
                 (link.SkippedGrids > 0 ? $" (пропущено дуговых/составных: {link.SkippedGrids})" : ""), "ok");
+            if (registration == null)
+                Log(link.Floors.Count == 0
+                    ? "Совмещение с Revit: на уровне нет перекрытий — поворот и сдвиг оставлены как были"
+                    : "Совмещение с Revit: контур плиты не удалось сопоставить с перекрытиями", "warn");
+            else if (registration.Reliable)
+                Log("Совмещение с Revit по перекрытиям: " + registration.Summary, "ok");
+            else
+                Log("Совмещение с Revit ненадёжно, поворот и сдвиг оставлены как были: " + registration.Summary, "warn");
+
+            var main = link.Floors.OrderByDescending(floor => floor.AreaM2).FirstOrDefault();
+            var thickness = ReadSettingsFromUi().SlabThicknessMm;
+            if (main != null && main.ThicknessMm > 0 && Math.Abs(main.ThicknessMm - thickness) > 0.5)
+                Log($"Толщина перекрытия в Revit {main.ThicknessMm:0} мм, в программе {thickness:0.##} мм — проверьте", "warn");
+
+            var alignment = Viewport.LastAlignment;
+            if (alignment != null)
+                Log("Привязка зон к осям Revit (кратно 10 мм): " + alignment.Summary,
+                    alignment.UntiedZones > 0 ? "warn" : "ok");
+            RefreshStats();
+        }
+
+        private void SetTransformText(double rotationDeg, double offsetXM, double offsetYM)
+        {
+            TbOffX.Text = offsetXM.ToString("0.####", CultureInfo.InvariantCulture);
+            TbOffY.Text = offsetYM.ToString("0.####", CultureInfo.InvariantCulture);
+            TbRot.Text = rotationDeg.ToString("0.######", CultureInfo.InvariantCulture);
         }
 
         /// <summary>Подставить связь в текущий результат, если отметка та же; иначе связь не действует.</summary>
@@ -1092,9 +1128,7 @@ namespace LiraSlabZones.Revit2023.UI
             TbMinFe.Text = s.MinActiveElements.ToString(CultureInfo.InvariantCulture);
             SldVis.Value = Math.Max(0, Math.Min(25, s.VisualizationScale));
             TxtVis.Text = SldVis.Value.ToString("0", CultureInfo.InvariantCulture);
-            TbOffX.Text = s.OffsetXM.ToString("0.###", CultureInfo.InvariantCulture);
-            TbOffY.Text = s.OffsetYM.ToString("0.###", CultureInfo.InvariantCulture);
-            TbRot.Text = s.RotationDeg.ToString("0.##", CultureInfo.InvariantCulture);
+            SetTransformText(s.RotationDeg, s.OffsetXM, s.OffsetYM);
 
             ChkAutoLayout.IsChecked = true;
             SldDetail.Value = DetailOptimizer.SliderFromStepIndex(
@@ -1316,7 +1350,10 @@ namespace LiraSlabZones.Revit2023.UI
                     $"As3: {patches.Count(patch => patch.Layer == RebarLayer.As3)}\n" +
                     $"As4: {patches.Count(patch => patch.Layer == RebarLayer.As4)}\n" +
                     $"Контур: {_result.Outline.Count} вершин\n" +
-                    $"Отверстия: {_result.Openings.Count}";
+                    $"Отверстия: {_result.Openings.Count}" +
+                    (_result.RevitLink?.Grids.Count > 0
+                        ? $"\nПривязка к осям Revit не кратна 10 мм: {_result.Diagnostics?.AxisTieCount ?? 0}"
+                        : "");
                 TxtDetail.Text = DetailOptimizer.StepLabel(
                     DetailOptimizer.StepIndexFromSlider(_result.Settings.DetailSlider));
                 return;
@@ -1341,6 +1378,9 @@ namespace LiraSlabZones.Revit2023.UI
                 $"Непокрытые КЭ: {diagnostics.UncoveredCount}\n" +
                 $"Пустые зоны: {diagnostics.EmptyZoneCount}\n" +
                 $"Конфликты зон: {diagnostics.ConflictCount}\n" +
+                (_result.RevitLink?.Grids.Count > 0
+                    ? $"Привязка к осям Revit не кратна 10 мм: {diagnostics.AxisTieCount}\n"
+                    : "") +
                 (overlong > 0 ? $"Превышение 11700 мм: {overlong} (размещение заблокировано)\n" : "") +
                 $"⚠ {st.WarnCount}   ✕ {st.ErrorCount}";
             TxtDetail.Text = string.IsNullOrWhiteSpace(st.DetailLevelLabel)

@@ -15,7 +15,9 @@ namespace LiraSlabZones.Core
         PlacementConflict,
         InterZoneStep,
         OpeningIntersection,
-        OutsideSlab
+        OutsideSlab,
+        /// <summary>Грань зоны не на сетке 10 мм от ближайшей оси Revit.</summary>
+        AxisTie
     }
 
     public sealed class ZoneIssue
@@ -35,6 +37,7 @@ namespace LiraSlabZones.Core
         public bool LayoutConverged { get; set; }
         public int UncoveredCount => Issues.Count(i => i.Kind == ZoneIssueKind.UncoveredElement);
         public int EmptyZoneCount => Issues.Count(i => i.Kind == ZoneIssueKind.EmptyZone);
+        public int AxisTieCount => Issues.Count(i => i.Kind == ZoneIssueKind.AxisTie);
         public int ConflictCount => Issues.Count(i => i.Kind == ZoneIssueKind.PlacementConflict ||
             i.Kind == ZoneIssueKind.InterZoneStep);
         public bool HasErrors => Issues.Count > 0;

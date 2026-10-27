@@ -211,6 +211,41 @@ namespace LiraSlabZones.Core
         public double Y2 { get; set; }
     }
 
+    /// <summary>Перекрытие Revit. Контуры — внутренняя система Revit, м; первый контур внешний.</summary>
+    public sealed class RevitFloorOutline
+    {
+        public long ElementId { get; set; }
+        public string TypeName { get; set; } = string.Empty;
+        public double TopM { get; set; }
+        public double ThicknessMm { get; set; }
+        public double AreaM2 { get; set; }
+        public List<List<Point3>> Loops { get; set; } = new List<List<Point3>>();
+    }
+
+    /// <summary>
+    /// Результат совмещения: значения для AnalysisSettings.RotationDeg/OffsetXM/OffsetYM
+    /// и точность по расстояниям от контура ЛИРЫ до кромок перекрытий Revit.
+    /// </summary>
+    public sealed class RevitRegistration
+    {
+        public double RotationDeg { get; set; }
+        public double OffsetXM { get; set; }
+        public double OffsetYM { get; set; }
+        /// <summary>СКО по совпавшим точкам (≤ 50 мм), мм.</summary>
+        public double RmsMm { get; set; }
+        /// <summary>Доля точек контура ЛИРЫ не дальше 20 мм от кромки перекрытия.</summary>
+        public double MatchedShare { get; set; }
+        public int Samples { get; set; }
+        /// <summary>Поворот доведён до точной параллельности осям Revit.</summary>
+        public bool GridSnapped { get; set; }
+        public bool Reliable => MatchedShare >= 0.6 && RmsMm <= 20;
+
+        public string Summary =>
+            $"поворот {RotationDeg:0.###}°, сдвиг X {OffsetXM:0.###} м, Y {OffsetYM:0.###} м; " +
+            $"совпало {MatchedShare:P0} контура, СКО {RmsMm:0.#} мм" +
+            (GridSnapped ? "; поворот выровнен по осям" : "");
+    }
+
     /// <summary>План несущих конструкций, созданный для одного ряда армирования.</summary>
     public sealed class RevitLayerPlan
     {
@@ -231,6 +266,12 @@ namespace LiraSlabZones.Core
         public List<RevitLayerPlan> Plans { get; set; } = new List<RevitLayerPlan>();
         public List<RevitGridLine> Grids { get; set; } = new List<RevitGridLine>();
         public int SkippedGrids { get; set; }
+        /// <summary>Перекрытия уровня: контуры верхней грани, отметка верха, толщина.</summary>
+        public List<RevitFloorOutline> Floors { get; set; } = new List<RevitFloorOutline>();
+        /// <summary>Совмещение плана ЛИРЫ с Revit по контурам перекрытий; null — не удалось.</summary>
+        public RevitRegistration? Registration { get; set; }
+        /// <summary>Отметка в имени планов: верх основного перекрытия, иначе отметка уровня.</summary>
+        public double PlanElevationM { get; set; }
         public DateTime LinkedUtc { get; set; } = DateTime.UtcNow;
 
         public bool Matches(double elevationZM) => Math.Abs(LiraElevationZM - elevationZM) < 0.001;

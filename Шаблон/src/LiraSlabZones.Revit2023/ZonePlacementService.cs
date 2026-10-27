@@ -41,9 +41,12 @@ namespace LiraSlabZones.Revit2023
                 throw new InvalidOperationException("В проекте Revit нет уровней.");
 
             var info = "Отметка плиты в программе: " + RevitLinkRules.FormatElevation(elevation) + "\n\n" +
-                       "Будут созданы (или использованы существующие) планы:\n" +
+                       "Будут созданы (или использованы существующие) планы — отметка в имени " +
+                       "берётся из Revit, по верху перекрытия выбранного уровня:\n" +
                        string.Join("\n", layers.Select(layer =>
-                           "• " + RevitLinkRules.PlanName(layer, settings.ReverseZoneDirections, elevation)));
+                           "• " + RevitLinkRules.PlanNamePrefix(layer, settings.ReverseZoneDirections) + "…")) +
+                       "\n\nПо контурам перекрытий план ЛИРЫ совмещается с Revit (поворот и сдвиг), " +
+                       "с планов читаются оси.";
             var templateName = AppConfig.LoadEffectiveSettings().RevitPlanTemplateName?.Trim();
             info += "\n\nШаблон вида: " + (string.IsNullOrEmpty(templateName)
                 ? "не задан — останется шаблон типа вида"
@@ -62,9 +65,6 @@ namespace LiraSlabZones.Revit2023
             if (dialog.ShowDialog() != true) return null;
             var level = levels[dialog.SelectedIndex];
 
-            using var tx = new Transaction(doc, "LiraSlabZones: планы для отметки " +
-                                                RevitLinkRules.FormatElevation(elevation));
-            tx.Start();
             var link = new RevitLinkInfo
             {
                 DocumentTitle = doc.Title,
@@ -73,11 +73,66 @@ namespace LiraSlabZones.Revit2023
                 LevelId = RevitIds.Value(level.Id),
                 LevelElevationM = UnitConversion.FeetToMeters(level.Elevation)
             };
-            link.Plans.AddRange(EnsurePlans(doc, level, layers, settings, elevation));
+            link.Floors.AddRange(ReadFloors(doc, level));
+            link.PlanElevationM = RevitLinkRules.PlanElevation(link.Floors, link.LevelElevationM);
+
+            using var tx = new Transaction(doc, "LiraSlabZones: планы для отметки " +
+                                                RevitLinkRules.FormatElevation(link.PlanElevationM));
+            tx.Start();
+            link.Plans.AddRange(EnsurePlans(doc, level, layers, settings, link.PlanElevationM));
             doc.Regenerate();
             ReadGrids(doc, link);
             tx.Commit();
+
+            link.Registration = RevitRegistrationSolver.Solve(analysis, link);
             return link;
+        }
+
+        /// <summary>Перекрытия уровня: горизонтальные верхние грани, их контуры, отметка и толщина.</summary>
+        private static IEnumerable<RevitFloorOutline> ReadFloors(Document doc, Level level)
+        {
+            const double squareFeetToM2 = 0.09290304;
+            foreach (var floor in new FilteredElementCollector(doc).OfClass(typeof(Floor)).Cast<Floor>())
+            {
+                if (floor.LevelId != level.Id) continue;
+                IList<Reference> tops;
+                try { tops = HostObjectUtils.GetTopFaces(floor); }
+                catch (Autodesk.Revit.Exceptions.ArgumentException) { continue; }
+
+                var outline = new RevitFloorOutline
+                {
+                    ElementId = RevitIds.Value(floor.Id),
+                    TypeName = floor.FloorType?.Name ?? string.Empty,
+                    ThicknessMm = Math.Round(UnitConversion.FeetToMeters(
+                        floor.get_Parameter(BuiltInParameter.FLOOR_ATTR_THICKNESS_PARAM)?.AsDouble() ?? 0) * 1000)
+                };
+                double topArea = 0;
+                foreach (var reference in tops)
+                {
+                    if (floor.GetGeometryObjectFromReference(reference) is not PlanarFace face ||
+                        face.FaceNormal.Z < 0.99)
+                        continue;
+                    outline.AreaM2 += face.Area * squareFeetToM2;
+                    if (face.Area > topArea)
+                    {
+                        topArea = face.Area;
+                        outline.TopM = UnitConversion.FeetToMeters(face.Origin.Z);
+                    }
+                    foreach (var loop in face.GetEdgesAsCurveLoops())
+                    {
+                        var points = new List<Point3>();
+                        foreach (var curve in loop)
+                        {
+                            var tessellated = curve.Tessellate();
+                            for (var i = 0; i < tessellated.Count - 1; i++)
+                                points.Add(new Point3(UnitConversion.FeetToMeters(tessellated[i].X),
+                                    UnitConversion.FeetToMeters(tessellated[i].Y), 0));
+                        }
+                        if (points.Count >= 3) outline.Loops.Add(points);
+                    }
+                }
+                if (outline.Loops.Count > 0) yield return outline;
+            }
         }
 
         /// <summary>Связь годится для размещения: тот же документ и отметка, все нужные планы на месте.</summary>
@@ -98,10 +153,12 @@ namespace LiraSlabZones.Revit2023
                 .FirstOrDefault(type => type.ViewFamily == ViewFamily.StructuralPlan)
                 ?? throw new InvalidOperationException(
                     "В проекте нет типа вида «План несущих конструкций».");
-            var existing = new FilteredElementCollector(doc)
+            var plans = new FilteredElementCollector(doc)
                 .OfClass(typeof(ViewPlan))
                 .Cast<ViewPlan>()
                 .Where(view => !view.IsTemplate)
+                .ToList();
+            var existing = plans
                 .GroupBy(view => view.Name)
                 .ToDictionary(group => group.Key, group => group.First());
             var template = FindPlanTemplate(doc);
@@ -111,7 +168,12 @@ namespace LiraSlabZones.Revit2023
                 var name = RevitLinkRules.PlanName(layer, settings.ReverseZoneDirections, elevation);
                 if (!existing.TryGetValue(name, out var plan))
                 {
-                    plan = ViewPlan.Create(doc, planType.Id, level.Id);
+                    // План этого уровня с прежней отметкой в имени (например, отметкой уровня) —
+                    // переименовать, а не плодить второй.
+                    var prefix = RevitLinkRules.PlanNamePrefix(layer, settings.ReverseZoneDirections);
+                    plan = plans.FirstOrDefault(view => view.GenLevel?.Id == level.Id &&
+                                                        view.Name.StartsWith(prefix, StringComparison.Ordinal));
+                    if (plan == null) plan = ViewPlan.Create(doc, planType.Id, level.Id);
                     plan.Name = name;
                 }
                 if (template != null && plan.ViewTemplateId != template.Id && plan.IsValidViewTemplate(template.Id))

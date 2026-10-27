@@ -9,11 +9,22 @@ namespace LiraSlabZones.Core
     public static class RevitLinkRules
     {
         /// <summary>«План несущих конструкций. Низ по X на отметке +29.450».</summary>
-        public static string PlanName(RebarLayer layer, bool reverseDirections, double elevationM)
+        public static string PlanName(RebarLayer layer, bool reverseDirections, double elevationM) =>
+            PlanNamePrefix(layer, reverseDirections) + FormatElevation(elevationM);
+
+        /// <summary>Имя плана без отметки — по нему находится план, созданный с другой отметкой.</summary>
+        public static string PlanNamePrefix(RebarLayer layer, bool reverseDirections)
         {
             var side = layer is RebarLayer.As1 or RebarLayer.As2 ? "Низ" : "Верх";
             var axis = RebarTables.DirectionForLayer(layer, reverseDirections) == ZoneDirection.X ? "X" : "Y";
-            return $"План несущих конструкций. {side} по {axis} на отметке {FormatElevation(elevationM)}";
+            return $"План несущих конструкций. {side} по {axis} на отметке ";
+        }
+
+        /// <summary>Отметка для имён планов: верх самого большого перекрытия уровня, иначе отметка уровня.</summary>
+        public static double PlanElevation(IEnumerable<RevitFloorOutline> floors, double levelElevationM)
+        {
+            var main = floors.OrderByDescending(floor => floor.AreaM2).FirstOrDefault();
+            return main != null ? Math.Round(main.TopM, 4) : levelElevationM;
         }
 
         public static string FormatElevation(double elevationM)

@@ -127,6 +127,9 @@ namespace LiraSlabZones.Revit2023.UI
         /// <summary>Снимок зон, которые сейчас показаны на холсте (с учётом ручных правок и отмены).</summary>
         public List<AdditionalZone> PlacementZones => WorkingZones.ToList();
 
+        /// <summary>Итог последней привязки зон к осям Revit; null — осей нет.</summary>
+        public GridAlignmentReport? LastAlignment { get; private set; }
+
         public bool UndoLastEdit()
         {
             if (_result == null || _undo.Count == 0) return false;
@@ -1557,6 +1560,13 @@ namespace LiraSlabZones.Revit2023.UI
                         _patchCandidateZones, _settings, _result.Outline);
                 }
             }
+            // Привязка к осям Revit — и после новой раскладки, и для сохранённых зон
+            // (связь могла появиться позже); для уже привязанных зон сдвиг нулевой.
+            var revitAxes = RevitGridAlignment.AxesInLira(_result, _settings);
+            LastAlignment = revitAxes.Count > 0
+                ? RevitGridAlignment.Apply(_patchCandidateZones, revitAxes,
+                    _result.Outline, _result.Openings, _settings.EdgeOffsetMm)
+                : null;
             ZoneEditor.RemoveZonesWithoutRequiredElements(
                 _patchCandidateZones, _result.Plates, _settings, _result.Outline, _result.Openings);
             AssignZoneIds(_patchCandidateZones);
@@ -1728,6 +1738,10 @@ namespace LiraSlabZones.Revit2023.UI
             if (_result.PatchPreviewOnly)
                 diagnostics.Issues.RemoveAll(issue => issue.Kind == ZoneIssueKind.InterZoneStep &&
                     issue.RelatedZoneId > 0 && IsSamePatchFrame(issue.ZoneId, issue.RelatedZoneId));
+            var revitAxes = RevitGridAlignment.AxesInLira(_result, _settings);
+            if (revitAxes.Count > 0)
+                diagnostics.Issues.AddRange(RevitGridAlignment.Check(
+                    WorkingZones, revitAxes, _result.Outline, _result.Openings, _settings.EdgeOffsetMm));
             _result.Diagnostics = diagnostics;
         }
 
@@ -1738,8 +1752,9 @@ namespace LiraSlabZones.Revit2023.UI
             ZoneIssueKind.OverlongBar => 2,
             ZoneIssueKind.OpeningIntersection => 3,
             ZoneIssueKind.OutsideSlab => 4,
-            ZoneIssueKind.InterZoneStep => 5,
-            ZoneIssueKind.PlacementConflict => 6,
+            ZoneIssueKind.AxisTie => 5,
+            ZoneIssueKind.InterZoneStep => 6,
+            ZoneIssueKind.PlacementConflict => 7,
             _ => int.MaxValue
         };
 
@@ -1751,6 +1766,7 @@ namespace LiraSlabZones.Revit2023.UI
             ZoneIssueKind.InterZoneStep => Brushes.DarkCyan,
             ZoneIssueKind.OpeningIntersection => Brushes.OrangeRed,
             ZoneIssueKind.OutsideSlab => Brushes.RoyalBlue,
+            ZoneIssueKind.AxisTie => Brushes.Red,
             ZoneIssueKind.PlacementConflict => Brushes.DarkOrange,
             _ => null
         };
