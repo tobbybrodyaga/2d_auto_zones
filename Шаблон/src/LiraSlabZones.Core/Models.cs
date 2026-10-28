@@ -306,6 +306,8 @@ namespace LiraSlabZones.Core
         public List<LiraPlateElement> AllPlates { get; set; } = new List<LiraPlateElement>();
 
         public List<Point3> Outline { get; set; } = new List<Point3>();
+        /// <summary>Строительная система координат; сохраняется вместе с геометрией в JSON.</summary>
+        public SlabCoordinateFrame? CoordinateFrame { get; set; }
         public List<AdditionalZone> Zones { get; set; } = new List<AdditionalZone>();
         public List<ZonePatch> Patches { get; set; } = new List<ZonePatch>();
         public bool PatchPreviewOnly { get; set; }
@@ -509,6 +511,7 @@ namespace LiraSlabZones.Core
         public double TargetElevationZM { get; set; } = double.NaN;
 
         public string ModelPart { get; set; } = "Visible";
+        public bool AutoAlignAfterRevitLink { get; set; } = true;
         public bool LoadReinforcement { get; set; } = true;
 
         // --- Автораскладка ---

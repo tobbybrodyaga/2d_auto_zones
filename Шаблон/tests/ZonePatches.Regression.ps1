@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug',
     [string]$BuildDirectory = ''
@@ -1050,7 +1050,7 @@ $shrinkGapMethod = [LiraSlabZones.Core.ZoneEditor].GetMethod(
     'TryShrinkAndShiftForConflict', [Reflection.BindingFlags]'NonPublic,Static')
 $shrinkGapDirect = $shrinkGapMethod.Invoke($null, @(
     $shrinkGapZones, $shrinkGapWeak, $shrinkGapStrong, $shrinkGapPlateMap,
-    $shrinkGapSettings, $null, $null))
+    $shrinkGapSettings, $null, $null, $null))
 Assert ($shrinkGapDirect -and [Math]::Abs($shrinkGapWeak.WidthMm - 800) -lt 0.001) `
     'A weaker overlapping zone should be reducible by whole steps after direct shifts have failed.'
 [LiraSlabZones.Core.ZoneEditor]::EnforceRequiredGaps(

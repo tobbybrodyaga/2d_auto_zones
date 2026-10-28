@@ -53,7 +53,8 @@ namespace LiraSlabZones.Core
                 new Edge(grid.X1, grid.Y1, grid.X2, grid.Y2)).ToList());
             if (!double.IsNaN(gridAngle))
             {
-                var delta = WrapQuarter(gridAngle - best.Theta);
+                var sourceAngle = SlabAxisAlignment.OutlineAngle(result) * Math.PI / 180;
+                var delta = WrapQuarter(gridAngle - sourceAngle - best.Theta);
                 if (Math.Abs(delta) > 1e-9 && Math.Abs(delta) < GridSnapDeg * Math.PI / 180)
                 {
                     var fixedFit = Icp(source, index, best.Theta + delta, best.Tx, best.Ty, fixedRotation: true, 0.2);
@@ -72,9 +73,9 @@ namespace LiraSlabZones.Core
             double cos = Math.Cos(best.Theta), sin = Math.Sin(best.Theta);
             return new RevitRegistration
             {
-                RotationDeg = Math.Round(best.Theta * 180 / Math.PI, 6),
-                OffsetXM = Math.Round(best.Tx - px + cos * px - sin * py, 6),
-                OffsetYM = Math.Round(best.Ty - py + sin * px + cos * py, 6),
+                RotationDeg = best.Theta * 180 / Math.PI,
+                OffsetXM = best.Tx - px + cos * px - sin * py,
+                OffsetYM = best.Ty - py + sin * px + cos * py,
                 RmsMm = Math.Round(best.RmsM * 1000, 1),
                 MatchedShare = best.Share,
                 Samples = source.Count,

@@ -81,6 +81,8 @@ namespace LiraSlabZones.Core
         public static (double X, double Y) ComputePivot(AnalysisResult? result)
         {
             if (result == null) return (0, 0);
+            if (result.CoordinateFrame != null)
+                return (result.CoordinateFrame.PivotXM, result.CoordinateFrame.PivotYM);
             double sx = 0, sy = 0;
             var n = 0;
             if (result.Outline != null)

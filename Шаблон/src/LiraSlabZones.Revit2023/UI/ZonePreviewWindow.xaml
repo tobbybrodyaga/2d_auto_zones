@@ -280,6 +280,8 @@
                       Style="{StaticResource SecondaryBtn}" Click="BtnRotateCw_Click"/>
             </Grid>
             <Button Content="Выровнять по осям" Style="{StaticResource SecondaryBtn}" Click="BtnAlignAxes_Click"/>
+            <CheckBox x:Name="ChkAutoAlignRevit" Content="Выравнивать после связи с Revit" IsChecked="True"
+                      Checked="SettingsChanged" Unchecked="SettingsChanged"/>
             <Button Content="Сбросить положение" Style="{StaticResource SecondaryBtn}" Click="BtnResetTransform_Click"/>
           </StackPanel>
         </GroupBox>

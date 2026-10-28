@@ -91,6 +91,8 @@ namespace LiraSlabZones.Core
                 ? source.AvailableLevels
                 : MeshBoundary.CollectLevels(all, null);
             result.UnitsNote = source.UnitsNote;
+            result.CoordinateFrame = source.CoordinateFrame;
+            result.RevitLink = source.RevitLink != null && source.RevitLink.Matches(elevZ) ? source.RevitLink : null;
             return result;
         }
 
@@ -116,7 +118,8 @@ namespace LiraSlabZones.Core
             string? elevationLabel = null,
             bool skipLevelFilter = false,
             List<OpeningInfo>? openings = null,
-            bool useCustomOpenings = false)
+            bool useCustomOpenings = false,
+            SlabCoordinateFrame? coordinateFrame = null)
         {
             List<LiraPlateElement> levelPlates;
             double elev;
@@ -162,6 +165,7 @@ namespace LiraSlabZones.Core
                     DocumentPath = documentPath,
                     UnitsNote = "Координаты: м. Мозаика As−фон: см²/м. Сейчас строятся только связные пятна и их ограничивающие рамки.",
                     Settings = settings,
+                    CoordinateFrame = coordinateFrame,
                     NodeCount = nodeCount,
                     PlateCount = levelPlates.Count,
                     Plates = levelPlates,
@@ -289,6 +293,7 @@ namespace LiraSlabZones.Core
                 UnitsNote =
                     "Координаты: м. Ø/шаг/длины зон: мм. As/фон: см²/м. В Revit длины → футы только в ZonePlacer.",
                 Settings = settings,
+                CoordinateFrame = coordinateFrame,
                 NodeCount = nodeCount,
                 PlateCount = levelPlates.Count,
                 Plates = levelPlates,
@@ -407,6 +412,8 @@ namespace LiraSlabZones.Core
                     rebuilt.Plates, rebuilt.Zones, settings, 0, true, rebuilt.Outline, rebuilt.Openings);
             }
             rebuilt.Settings = settings;
+            rebuilt.CoordinateFrame = source.CoordinateFrame;
+            rebuilt.RevitLink = source.RevitLink;
             rebuilt.AllPlates = source.AllPlates;
             rebuilt.BoundaryConditions = CloneBoundaryConditions(source.BoundaryConditions);
             rebuilt.AvailableLevels = source.AvailableLevels;
@@ -564,6 +571,9 @@ namespace LiraSlabZones.Core
                 Levels = result.AvailableLevels,
                 Axes = result.Axes,
                 UnitsNote = result.UnitsNote,
+                result.Settings,
+                result.CoordinateFrame,
+                result.RevitLink,
                 Plates = plates
             };
 

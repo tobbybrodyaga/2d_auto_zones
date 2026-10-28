@@ -633,6 +633,9 @@ namespace LiraSlabZones.Core
             var platesById = plates.ToDictionary(plate => plate.Id);
             for (var pass = 0; pass < Math.Min(512, Math.Max(1, zones.Count * 2)); pass++)
             {
+                // Пробные сдвиги не меняют zones. Исходное покрытие зоны достаточно
+                // вычислить один раз за проход; после принятого сдвига проход заканчивается.
+                var coverageTargets = new Dictionary<AdditionalZone, List<LiraPlateElement>>();
                 var adjacentSpacingPairs = ZoneLayoutDiagnostics.AddInterZoneStepIssues(
                     zones, new ZoneDiagnostics(),
                     UnitConversion.MmToMeters(Math.Max(0, settings?.GridCellMm ?? 0)));
@@ -648,13 +651,13 @@ namespace LiraSlabZones.Core
                     if (!placementConflict && !excessiveAdjacentGap) continue;
                     if (excessiveAdjacentGap &&
                         TryExpandWeakerZoneIntoGap(
-                            zones, first, second, platesById, settings, slab, openings))
+                            zones, first, second, platesById, settings, slab, openings, coverageTargets))
                     {
                         changed = true;
                         break;
                     }
                     if (!TryResolvePlacementConflict(
-                            zones, first, second, platesById, settings, slab, openings,
+                            zones, first, second, platesById, settings, slab, openings, coverageTargets,
                             requireExactGap: excessiveAdjacentGap))
                         continue;
                     changed = true;
@@ -1222,6 +1225,7 @@ namespace LiraSlabZones.Core
             IList<AdditionalZone> zones, AdditionalZone first, AdditionalZone second,
             IReadOnlyDictionary<int, LiraPlateElement> platesById,
             AnalysisSettings? settings, IList<Point3>? slab, IList<OpeningInfo>? openings,
+            Dictionary<AdditionalZone, List<LiraPlateElement>> coverageTargets,
             bool requireExactGap = false)
         {
             var gap = Math.Min(first.BarStepMm, second.BarStepMm) / 1000.0;
@@ -1247,11 +1251,11 @@ namespace LiraSlabZones.Core
                 !HasPlacementConflict(copy, reference) &&
                 (!requireExactGap || HasExactAdjacentGap(copy, reference, gap)) &&
                 (openings == null || openings.Count == 0 || !IntersectsOpening(copy, openings)) &&
-                PreservesRequiredCoverage(copy, moving, zones, platesById, settings, slab, openings) &&
                 !zones.Any(other =>
                     !ReferenceEquals(other, moving) && !ReferenceEquals(other, reference) &&
                     other.Layer == moving.Layer && !HasPlacementConflict(moving, other) &&
-                    HasPlacementConflict(copy, other));
+                    HasPlacementConflict(copy, other)) &&
+                PreservesRequiredCoverage(copy, moving, zones, platesById, settings, slab, openings, coverageTargets);
 
             foreach (var candidate in candidates
                          .OrderBy(item => Math.Abs(item.Dx) + Math.Abs(item.Dy))
@@ -1279,7 +1283,7 @@ namespace LiraSlabZones.Core
             }
 
             return TryShrinkAndShiftForConflict(
-                zones, first, second, platesById, settings, slab, openings);
+                zones, first, second, platesById, settings, slab, openings, coverageTargets);
         }
 
         private static bool TryShrinkAndShiftForConflict(
@@ -1289,7 +1293,8 @@ namespace LiraSlabZones.Core
             IReadOnlyDictionary<int, LiraPlateElement> platesById,
             AnalysisSettings? settings,
             IList<Point3>? slab,
-            IList<OpeningInfo>? openings)
+            IList<OpeningInfo>? openings,
+            Dictionary<AdditionalZone, List<LiraPlateElement>> coverageTargets)
         {
             if (first.Direction != second.Direction || first.BarStepMm <= 0 ||
                 second.BarStepMm <= 0) return false;
@@ -1364,9 +1369,7 @@ namespace LiraSlabZones.Core
                             copy.WidthMm + 1e-6 < minimumModules * stepMm ||
                             HasPlacementConflict(copy, reference) ||
                             !HasExactAdjacentGap(copy, reference, requiredGapM) ||
-                            (openings != null && openings.Count > 0 && IntersectsOpening(copy, openings)) ||
-                            !PreservesRequiredCoverage(copy, moving, zones, platesById,
-                                settings, slab, openings))
+                            (openings != null && openings.Count > 0 && IntersectsOpening(copy, openings)))
                             continue;
 
                         var proposed = zones.Where(zone => !ReferenceEquals(zone, moving))
@@ -1376,6 +1379,8 @@ namespace LiraSlabZones.Core
                             other.Layer == moving.Layer && !HasPlacementConflict(moving, other) &&
                             HasPlacementConflict(copy, other));
                         if (createsConflict) continue;
+                        if (!PreservesRequiredCoverage(copy, moving, zones, platesById,
+                                settings, slab, openings, coverageTargets)) continue;
 
                         var oldBounds = Bounds(moving.Contour);
                         var replacementBounds = Bounds(copy.Contour);
@@ -1450,7 +1455,8 @@ namespace LiraSlabZones.Core
         private static bool TryExpandWeakerZoneIntoGap(
             IList<AdditionalZone> zones, AdditionalZone first, AdditionalZone second,
             IReadOnlyDictionary<int, LiraPlateElement> platesById,
-            AnalysisSettings? settings, IList<Point3>? slab, IList<OpeningInfo>? openings)
+            AnalysisSettings? settings, IList<Point3>? slab, IList<OpeningInfo>? openings,
+            Dictionary<AdditionalZone, List<LiraPlateElement>> coverageTargets)
         {
             if (first.Layer != second.Layer || first.Direction != second.Direction ||
                 first.FamilyKind != ZoneFamilyKind.Straight ||
@@ -1547,8 +1553,10 @@ namespace LiraSlabZones.Core
                     continue;
 
                 if ((openings?.Count ?? 0) > 0 && IntersectsOpening(copy, openings!)) continue;
+                if (zones.Any(other => !ReferenceEquals(other, moving) && other.Layer == moving.Layer &&
+                        HasPlacementConflict(copy, other))) continue;
                 if (!PreservesRequiredCoverage(copy, moving, zones, platesById,
-                        settings, slab, openings)) continue;
+                        settings, slab, openings, coverageTargets)) continue;
 
                 var proposedZones = zones.Where(zone => zone.Layer == moving.Layer &&
                     !ReferenceEquals(zone, moving)).Concat(new[] { copy }).ToList();
@@ -1561,10 +1569,7 @@ namespace LiraSlabZones.Core
                         proposedZones, plate, moving.Layer,
                         plate.Rebar.Get(moving.Layer) - BackgroundAs(settings, moving.Layer),
                         slab, openings));
-                if (!coverageValid || zones.Any(other =>
-                        !ReferenceEquals(other, moving) && other.Layer == moving.Layer &&
-                        HasPlacementConflict(copy, other)))
-                    continue;
+                if (!coverageValid) continue;
 
                 copy.NodeIds = platesById.Values.Where(plate => plate.Rebar.Ok &&
                         plate.Rebar.Get(moving.Layer) - BackgroundAs(settings, moving.Layer) >
@@ -1589,15 +1594,20 @@ namespace LiraSlabZones.Core
         private static bool PreservesRequiredCoverage(
             AdditionalZone candidate, AdditionalZone original, IList<AdditionalZone> zones,
             IReadOnlyDictionary<int, LiraPlateElement> platesById, AnalysisSettings? settings,
-            IList<Point3>? slabOutline = null, IList<OpeningInfo>? openings = null)
+            IList<Point3>? slabOutline = null, IList<OpeningInfo>? openings = null,
+            Dictionary<AdditionalZone, List<LiraPlateElement>>? coverageTargets = null)
         {
             var background = BackgroundAs(settings, original.Layer);
-            var nearbyPlates = platesById.Values.Where(plate => plate.Rebar.Ok &&
-                plate.Rebar.Get(original.Layer) - background > 0.01 &&
-                (original.NodeIds.Contains(plate.Id) || IntersectsBounds(original, plate))).ToList();
-            var targets = nearbyPlates.Where(plate => ZoneCoverageRules.CoversOrBridgesGap(
-                zones, plate, original.Layer,
-                plate.Rebar.Get(original.Layer) - background, slabOutline, openings)).ToList();
+            if (coverageTargets == null || !coverageTargets.TryGetValue(original, out var targets))
+            {
+                var nearbyPlates = platesById.Values.Where(plate => plate.Rebar.Ok &&
+                    plate.Rebar.Get(original.Layer) - background > 0.01 &&
+                    (original.NodeIds.Contains(plate.Id) || IntersectsBounds(original, plate))).ToList();
+                targets = nearbyPlates.Where(plate => ZoneCoverageRules.CoversOrBridgesGap(
+                    zones, plate, original.Layer,
+                    plate.Rebar.Get(original.Layer) - background, slabOutline, openings)).ToList();
+                if (coverageTargets != null) coverageTargets[original] = targets;
+            }
 
             var otherZones = zones.Where(zone => !ReferenceEquals(zone, original) &&
                 zone.Layer == original.Layer && zone.Contour.Count >= 3).ToList();

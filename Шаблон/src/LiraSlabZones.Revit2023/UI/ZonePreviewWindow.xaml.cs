@@ -257,6 +257,9 @@ namespace LiraSlabZones.Revit2023.UI
             else
                 Log("Совмещение с Revit ненадёжно, поворот и сдвиг оставлены как были: " + registration.Summary, "warn");
 
+            if (ChkAutoAlignRevit.IsChecked == true && registration?.Reliable == true)
+                AlignSlabAxes();
+
             var main = link.Floors.OrderByDescending(floor => floor.AreaM2).FirstOrDefault();
             var thickness = ReadSettingsFromUi().SlabThicknessMm;
             if (main != null && main.ThicknessMm > 0 && Math.Abs(main.ThicknessMm - thickness) > 0.5)
@@ -274,6 +277,19 @@ namespace LiraSlabZones.Revit2023.UI
             TbOffX.Text = offsetXM.ToString("0.####", CultureInfo.InvariantCulture);
             TbOffY.Text = offsetYM.ToString("0.####", CultureInfo.InvariantCulture);
             TbRot.Text = rotationDeg.ToString("0.######", CultureInfo.InvariantCulture);
+            // Tag хранит double; форматированный текст нужен только для отображения.
+            TbRot.Tag = rotationDeg;
+            TbOffX.Tag = offsetXM;
+            TbOffY.Tag = offsetYM;
+        }
+
+        private static double PreciseTransformValue(TextBox box, string format)
+        {
+            if (box.Tag is double exact && box.Text == exact.ToString(format, CultureInfo.InvariantCulture))
+                return exact;
+            return double.TryParse(box.Text.Replace(',', '.'), NumberStyles.Float,
+                CultureInfo.InvariantCulture, out var value) && !double.IsNaN(value) && !double.IsInfinity(value)
+                ? value : 0;
         }
 
         /// <summary>Подставить связь в текущий результат, если отметка та же; иначе связь не действует.</summary>
@@ -694,6 +710,7 @@ namespace LiraSlabZones.Revit2023.UI
             rebuilt.BoundaryConditions = boundaries;
             rebuilt.UnitsNote = units;
             rebuilt.Settings = settings;
+            rebuilt.CoordinateFrame = _result.CoordinateFrame;
             _result = rebuilt;
             _plates = rebuilt.Plates ?? _plates;
             UpdatePreviewModeControls(rebuilt);
@@ -820,6 +837,7 @@ namespace LiraSlabZones.Revit2023.UI
             rebuilt.BoundaryConditions = boundariesForLevel;
             rebuilt.AllPlates = all;
             rebuilt.AvailableLevels = levels;
+            rebuilt.CoordinateFrame = _result.CoordinateFrame;
 
             LoadResult(rebuilt, fitView: false, syncUiSettings: false);
             if (_result != null) _result.Settings.SlabSelected = true;
@@ -833,26 +851,34 @@ namespace LiraSlabZones.Revit2023.UI
 
         private void RotateBy(double delta)
         {
-            double cur = 0;
-            double.TryParse((TbRot.Text ?? "").Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out cur);
-            cur = Math.Round(cur + delta, 2);
+            var cur = PreciseTransformValue(TbRot, "0.######") + delta;
             while (cur > 180) cur -= 360;
             while (cur <= -180) cur += 360;
-            TbRot.Text = cur.ToString("0.##", CultureInfo.InvariantCulture);
+            SetTransformText(cur, PreciseTransformValue(TbOffX, "0.####"), PreciseTransformValue(TbOffY, "0.####"));
             ApplyTransformToViewport();
         }
 
         private void BtnAlignAxes_Click(object sender, RoutedEventArgs e)
         {
-            if (_result?.Axes == null || _result.Axes.Count == 0)
+            AlignSlabAxes();
+        }
+
+        private void AlignSlabAxes()
+        {
+            if (_result == null || _busy) return;
+            _rebuildTimer.Stop();
+            try
             {
-                MessageBox.Show("Нет осей из ЛИРА.");
-                return;
+                AttachRevitLink();
+                var report = SlabAxisAlignment.Align(_result, ReadSettingsFromUi());
+                if (report.Changed) LoadResult(report.Result, fitView: true);
+                Log(report.Summary, report.Source.StartsWith("оси ЛИРЫ") ? "warn" : "ok");
+                var alignment = Viewport.LastAlignment;
+                if (alignment != null)
+                    Log("Привязка зон к осям Revit (кратно 10 мм): " + alignment.Summary,
+                        alignment.UntiedZones > 0 ? "warn" : "ok");
             }
-            double ang = ContourFix.EstimateGridAngleDeg(_result.Axes);
-            TbRot.Text = (-ang).ToString("0.##", CultureInfo.InvariantCulture);
-            ApplyTransformToViewport();
-            Log($"Выравнивание по осям: поворот {-ang:F1}°", "ok");
+            catch (Exception ex) { Log("Выравнивание: " + ex.Message, "warn"); }
         }
 
         private void BtnResetTransform_Click(object sender, RoutedEventArgs e)
@@ -1060,9 +1086,10 @@ namespace LiraSlabZones.Revit2023.UI
                 MinZoneLengthM = ParseZoneSizeMmToM(TbMinL.Text),
                 MinActiveElements = I(TbMinFe.Text, 0),
                 VisualizationScale = SldVis.Value,
-                OffsetXM = D(TbOffX.Text, 0),
-                OffsetYM = D(TbOffY.Text, 0),
-                RotationDeg = D(TbRot.Text, 0),
+                OffsetXM = PreciseTransformValue(TbOffX, "0.####"),
+                OffsetYM = PreciseTransformValue(TbOffY, "0.####"),
+                RotationDeg = PreciseTransformValue(TbRot, "0.######"),
+                AutoAlignAfterRevitLink = ChkAutoAlignRevit.IsChecked == true,
                 TargetElevationZM = CmbLevels.SelectedItem is ElevationLevelInfo lv ? lv.ZM : double.NaN,
                 LoadReinforcement = true,
                 ModelPart = "Visible",
@@ -1129,6 +1156,7 @@ namespace LiraSlabZones.Revit2023.UI
             SldVis.Value = Math.Max(0, Math.Min(25, s.VisualizationScale));
             TxtVis.Text = SldVis.Value.ToString("0", CultureInfo.InvariantCulture);
             SetTransformText(s.RotationDeg, s.OffsetXM, s.OffsetYM);
+            ChkAutoAlignRevit.IsChecked = s.AutoAlignAfterRevitLink;
 
             ChkAutoLayout.IsChecked = true;
             SldDetail.Value = DetailOptimizer.SliderFromStepIndex(
