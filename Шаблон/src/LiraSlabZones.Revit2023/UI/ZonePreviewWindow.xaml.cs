@@ -51,7 +51,7 @@ namespace LiraSlabZones.Revit2023.UI
                 {
                     SelectComboValue(CmbSelectedZoneDiameter, z.DiameterMm);
                     SelectComboValue(CmbSelectedZoneStep, z.BarStepMm);
-                    TbSelectedLengthMm.Text = z.LengthMm.ToString("0", CultureInfo.InvariantCulture);
+                    TbSelectedLengthMm.Text = ((z.BendAtStart || z.BendAtEnd) ? z.LengthM * 1000 : z.LengthMm).ToString("0", CultureInfo.InvariantCulture);
                     TbSelectedWidthMm.Text = z.WidthMm.ToString("0", CultureInfo.InvariantCulture);
                     _suppressZoneFamilySelection = true;
                     try
@@ -66,7 +66,7 @@ namespace LiraSlabZones.Revit2023.UI
                         ? $"Ø{z.DiameterMm}/{z.BarStepMm}×{z.BarCount}\n{z.FamilyKind} {z.Direction}\n"
                         : "";
                     var size = z.LengthMm > 0
-                        ? $"L×B: {z.LengthMm:0}×{z.WidthMm:0} мм\n"
+                        ? $"L×B: {((z.BendAtStart || z.BendAtEnd) ? z.LengthM * 1000 : z.LengthMm):0}×{z.WidthMm:0} мм\n"
                         : $"Габарит: {z.WidthM:F2}×{z.LengthM:F2} м\n";
                     var tie = string.IsNullOrWhiteSpace(z.AxisTieLabel) ? "" : $"Привязка: {z.AxisTieLabel}\n";
                     TxtZoneInfo.Text =
@@ -74,8 +74,11 @@ namespace LiraSlabZones.Revit2023.UI
                         bars +
                         $"As треб.: {z.AsRequired:F2}\nAs доп.: {z.AsAdditional:F2}\n" +
                         size +
+                        ((z.BendAtStart || z.BendAtEnd) ? $"Загиб: {(z.BendAtStart && z.BendAtEnd ? "оба торца" : z.BendAtStart ? "начало" : "конец")}, H={z.VerticalLegMm:0} мм; заготовка {z.LengthMm:0} мм\n" : "") +
                         tie +
-                        z.Comment;
+                        z.Comment + (z.BoundaryCheck?.Checked == true &&
+                            (!z.BoundaryCheck.Allowed || z.BoundaryCheck.CenteredException)
+                            ? "\nГраница: " + z.BoundaryCheck.Message : "");
                 };
                 Viewport.PatchSelected += selection =>
                 {
@@ -462,7 +465,7 @@ namespace LiraSlabZones.Revit2023.UI
             else if (CmbLevels.Items.Count > 0) CmbLevels.SelectedIndex = 0;
         }
 
-        private void PushToViewport(bool fitView = true)
+        private void PushToViewport(bool fitView = true, IList<AdditionalZone>? coverageReference = null)
         {
             if (_result == null) return;
             AttachRevitLink();
@@ -473,8 +476,10 @@ namespace LiraSlabZones.Revit2023.UI
                 ChkShowIso.IsChecked == true,
                 ChkShowAxes.IsChecked == true,
                 fitView: fitView,
-                showPatchBoundaries: ChkShowPatchBoundaries.IsChecked == true);
+                showPatchBoundaries: ChkShowPatchBoundaries.IsChecked == true,
+                coverageReference: coverageReference);
             TxtZoom.Text = $"{Viewport.Zoom * 100:0}%";
+            RefreshStats();
         }
 
         private void BtnDemo_Click(object sender, RoutedEventArgs e)
@@ -673,6 +678,13 @@ namespace LiraSlabZones.Revit2023.UI
             if (_result == null) return;
             if (_busy) return;
 
+            var previousElevation = _result.ElevationZM;
+            var previousSettings = JObject.FromObject(_result.Settings);
+            var previousZones = _result.PatchPreviewOnly
+                ? new ZoneBoundaryConstraints(_result.Outline, _result.Openings, _result.Settings.EdgeOffsetMm)
+                    .Snapshot(Viewport.PlacementZones)
+                : null;
+
             var settings = fromUi ? ReadSettingsFromUi() : (_result.Settings ?? new AnalysisSettings());
             var all = _result.AllPlates != null && _result.AllPlates.Count > 0 ? _result.AllPlates : _plates;
             if (all.Count == 0 && _plates.Count == 0) return;
@@ -725,10 +737,25 @@ namespace LiraSlabZones.Revit2023.UI
                 : $"пластин: {rebuilt.PlateCount}, зон: {rebuilt.Zones.Count}";
             TxtSource.Text = $"{rebuilt.DocumentName}\n{resultKind}" +
                              (string.IsNullOrWhiteSpace(rebuilt.ElevationLabel) ? "" : $"\n{rebuilt.ElevationLabel}");
-            PushToViewport(fitView: false);
+            PushToViewport(fitView: false, coverageReference:
+                previousZones != null && Math.Abs(previousElevation - rebuilt.ElevationZM) < 0.001 &&
+                SameCoverageInputs(previousSettings, JObject.FromObject(settings)) ? previousZones : null);
             var summary = rebuilt.PatchPreviewOnly ? $"пятен {rebuilt.Patches.Count}" : $"зон {rebuilt.Zones.Count}{gate}";
             Log($"Пересчёт: {summary} (вид сохранён)",
                 rebuilt.PatchPreviewOnly || settings.CanLayoutAdditionalZones(out _) ? "ok" : "warn");
+        }
+
+        private static bool SameCoverageInputs(JObject before, JObject after)
+        {
+            foreach (var obj in new[] { before, after })
+            {
+                obj.Remove("TargetElevationZM");
+                obj.Remove("VisualizationScale");
+                obj.Remove("AutoAlignAfterRevitLink");
+                if (obj["AllowedAdditionalBarStepsMm"] is JArray steps)
+                    obj["AllowedAdditionalBarStepsMm"] = new JArray(steps.Values<int>().Distinct().OrderBy(x => x));
+            }
+            return JToken.DeepEquals(before, after);
         }
 
         private void ScheduleAutoRebuild()
@@ -965,6 +992,24 @@ namespace LiraSlabZones.Revit2023.UI
             }
             _result.Zones = zones;
             _result.Settings = ReadSettingsFromUi();
+            var layout = ZoneLayoutDiagnostics.Evaluate(_result.Plates, zones, _result.Settings,
+                0, true, _result.Outline, _result.Openings);
+            var blocker = layout.Issues.FirstOrDefault(i => i.Kind == ZoneIssueKind.InvalidZone ||
+                i.Kind == ZoneIssueKind.OverlongBar || i.Kind == ZoneIssueKind.PlacementConflict ||
+                i.Kind == ZoneIssueKind.InterZoneStep);
+            if (blocker != null)
+            {
+                Log("Размещение остановлено: " + blocker.Message, "warn");
+                return;
+            }
+            var boundaryIssues = new ZoneBoundaryConstraints(_result.Outline, _result.Openings,
+                _result.Settings.EdgeOffsetMm).CheckZones(zones);
+            if (boundaryIssues.Count > 0)
+            {
+                Log($"Размещение остановлено: {boundaryIssues.Count} зон нарушают контур/отступ. " +
+                    boundaryIssues[0].Message, "warn");
+                return;
+            }
             _placeCallback(_result);
         }
 
@@ -1379,9 +1424,14 @@ namespace LiraSlabZones.Revit2023.UI
                     $"As4: {patches.Count(patch => patch.Layer == RebarLayer.As4)}\n" +
                     $"Контур: {_result.Outline.Count} вершин\n" +
                     $"Отверстия: {_result.Openings.Count}" +
+                    $"\nНарушен отступ от грани: {_result.Diagnostics.Issues.Count(i => i.Kind == ZoneIssueKind.BoundaryClearance)}" +
                     (_result.RevitLink?.Grids.Count > 0
                         ? $"\nПривязка к осям Revit не кратна 10 мм: {_result.Diagnostics?.AxisTieCount ?? 0}"
                         : "");
+                if (Viewport.LastConflictResolution is ZoneConflictGroupResult resolved)
+                    TxtStats.Text += $"\nКоллизии между зонами: {resolved.PairsBefore} → {resolved.PairsAfter} пар";
+                else
+                    TxtStats.Text += $"\nКоллизии между зонами: {(_result.Diagnostics?.ConflictCount ?? 0) / 2} пар";
                 TxtDetail.Text = DetailOptimizer.StepLabel(
                     DetailOptimizer.StepIndexFromSlider(_result.Settings.DetailSlider));
                 return;

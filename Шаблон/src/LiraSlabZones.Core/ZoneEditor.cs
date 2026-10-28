@@ -528,6 +528,8 @@ namespace LiraSlabZones.Core
         {
             var name = AppConfig.StripRfa(familyName);
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Имя семейства не задано.", nameof(familyName));
+            if (zone.FamilyKind != kind) { zone.BendAtStart=false; zone.BendAtEnd=false; }
+            if (kind == ZoneFamilyKind.Straight) zone.VerticalLegMm=0;
             zone.FamilyKind = kind;
             zone.FamilyFileName = name;
             SetContour(zone, zone.Contour.ToList());
@@ -2429,6 +2431,8 @@ namespace LiraSlabZones.Core
             merged.AsAdditional = Math.Max(first.AsAdditional, second.AsAdditional);
             merged.Comment = "объединено в предпросмотре";
             SetContour(merged, FromPath(path, merged.LevelZM));
+            if (merged.BoundaryConstraints != null &&
+                !merged.BoundaryConstraints.Allows(merged.Contour, merged.Direction)) return null;
             return merged;
         }
 
@@ -2474,6 +2478,8 @@ namespace LiraSlabZones.Core
         private static bool ApplyClipped(
             AdditionalZone zone, IList<Point3> contour, IList<Point3> slab)
         {
+            if (zone.BoundaryConstraints != null &&
+                !zone.BoundaryConstraints.Allows(contour, zone.Direction)) return false;
             var clipped = IntersectWithSlab(new Paths64 { ToPath(contour) }, slab);
             var path = Largest(clipped);
             if (path == null) return false;
@@ -2484,6 +2490,8 @@ namespace LiraSlabZones.Core
         private static bool ApplyEditedContour(
             AdditionalZone zone, IList<Point3> contour, IList<Point3> slab, bool clipToSlab)
         {
+            if (zone.BoundaryConstraints != null &&
+                !zone.BoundaryConstraints.Allows(contour, zone.Direction)) return false;
             if (clipToSlab) return ApplyClipped(zone, contour, slab);
             if (contour == null || contour.Count < 3) return false;
             SetContour(zone, contour.ToList());
@@ -2522,6 +2530,8 @@ namespace LiraSlabZones.Core
 
         private static AdditionalZone Copy(AdditionalZone source) => new AdditionalZone
         {
+            BoundaryConstraints = source.BoundaryConstraints,
+            BoundaryCheck = source.BoundaryCheck,
             ZoneId = source.ZoneId,
             Layer = source.Layer,
             NodeIds = source.NodeIds.ToList(),
@@ -2544,6 +2554,9 @@ namespace LiraSlabZones.Core
             CountInSpec = source.CountInSpec,
             CountBars = source.CountBars,
             VerticalLegMm = source.VerticalLegMm,
+            BendAtStart = source.BendAtStart,
+            BendAtEnd = source.BendAtEnd,
+            DesignEdgeCoverMm = source.DesignEdgeCoverMm,
             RotationDeg = source.RotationDeg,
             AlphaCoef = source.AlphaCoef,
             Rebar = source.Rebar,

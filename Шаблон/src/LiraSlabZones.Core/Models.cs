@@ -128,6 +128,9 @@ namespace LiraSlabZones.Core
 
     public sealed class AdditionalZone
     {
+        [Newtonsoft.Json.JsonIgnore]
+        public ZoneBoundaryConstraints? BoundaryConstraints { get; set; }
+        public ZoneBoundaryCheck? BoundaryCheck { get; set; }
         public int ZoneId { get; set; }
         public int ElementId { get; set; }
         public RebarLayer Layer { get; set; } = RebarLayer.As1;
@@ -168,6 +171,11 @@ namespace LiraSlabZones.Core
         public bool CountInSpec { get; set; } = true;
         public bool CountBars { get; set; }
         public double VerticalLegMm { get; set; }
+        /// <summary>Торцы по направлению X/Y плиты; загиб расположен с отступом от грани.</summary>
+        public bool BendAtStart { get; set; }
+        public bool BendAtEnd { get; set; }
+        /// <summary>Защитная полоса бетона исключается только из геометрической проверки покрытия, не из данных КЭ.</summary>
+        public double DesignEdgeCoverMm { get; set; }
 
         /// <summary>Привязка к ближайшей вертикальной оси (имя).</summary>
         public string AxisNameX { get; set; } = string.Empty;
@@ -356,6 +364,8 @@ namespace LiraSlabZones.Core
 
     public sealed class ZonePatchFrameSelection
     {
+        [Newtonsoft.Json.JsonIgnore]
+        public ZoneBoundaryConstraints? BoundaryConstraints { get; set; }
         public List<ZonePatch> Patches { get; set; } = new List<ZonePatch>();
         public List<AdditionalZone> Zones { get; set; } = new List<AdditionalZone>();
         public List<ZonePatchFrameElement> Elements { get; set; } = new List<ZonePatchFrameElement>();

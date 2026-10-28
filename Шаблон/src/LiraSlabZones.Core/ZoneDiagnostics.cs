@@ -17,7 +17,9 @@ namespace LiraSlabZones.Core
         OpeningIntersection,
         OutsideSlab,
         /// <summary>Грань зоны не на сетке 10 мм от ближайшей оси Revit.</summary>
-        AxisTie
+        AxisTie,
+        /// <summary>Нарушен отступ зоны от фактического контура или отверстия.</summary>
+        BoundaryClearance
     }
 
     public sealed class ZoneIssue
@@ -397,6 +399,8 @@ namespace LiraSlabZones.Core
             public Paths64 Paths = new Paths64();
             public bool IsValid;
             public bool UsePointFallback = true;
+            public double EdgeCoverMm;
+            public bool CoverOnly;
             public (double MinX, double MaxX, double MinY, double MaxY) Bounds;
         }
 
@@ -404,6 +408,7 @@ namespace LiraSlabZones.Core
         {
             public CachedOutlinePath(Path64 path) => Path = path;
             public Path64 Path { get; }
+            public Dictionary<double,Paths64> Inset { get; } = new();
         }
 
         private sealed class CachedOpeningBuffer
@@ -549,7 +554,9 @@ namespace LiraSlabZones.Core
             double requiredAs, IList<Point3>? slabOutline, IList<OpeningInfo>? openings,
             bool allowOverlappingZones)
         {
-            var footprint = GetFootprint(plate, slabOutline);
+            var edgeCover=zones.Where(z=>z.Layer==layer).Select(z=>z.DesignEdgeCoverMm).DefaultIfEmpty(0).Max();
+            var footprint = GetFootprint(plate, slabOutline,edgeCover);
+            if(footprint.CoverOnly) return true;
             if (footprint.UsePointFallback)
                 return CoversOrBridgesGap(zones.Where(zone => zone.Layer == layer).ToList(),
                     plate.Centroid, requiredAs);
@@ -623,7 +630,8 @@ namespace LiraSlabZones.Core
                     continue;
 
                 if (ZonesTouchOrOverlap(first, second) &&
-                    (allowOverlappingZones || !ZonesHavePositiveAreaOverlap(first, second)))
+                    (allowOverlappingZones || ZoneEditor.IsAllowedLongitudinalLapOverlap(first, second) ||
+                     !ZonesHavePositiveAreaOverlap(first, second)))
                 {
                     var pairCoverage = Clipper.Union(
                         new Paths64 { ToPath(first.Contour), ToPath(second.Contour) }, FillRule.NonZero);
@@ -654,16 +662,18 @@ namespace LiraSlabZones.Core
             return false;
         }
 
-        private static CachedFootprint GetFootprint(LiraPlateElement plate, IList<Point3>? slabOutline)
+        private static CachedFootprint GetFootprint(LiraPlateElement plate, IList<Point3>? slabOutline,double edgeCoverMm=0)
         {
             var cached = FootprintCache.GetValue(plate, _ => new CachedFootprint());
             lock (cached)
             {
                 if (ReferenceEquals(cached.Contour, plate.Contour) &&
-                    ReferenceEquals(cached.SlabOutline, slabOutline)) return cached;
+                    ReferenceEquals(cached.SlabOutline, slabOutline) && Math.Abs(cached.EdgeCoverMm-edgeCoverMm)<1e-9) return cached;
 
                 cached.Contour = plate.Contour;
                 cached.SlabOutline = slabOutline;
+                cached.EdgeCoverMm=edgeCoverMm;
+                cached.CoverOnly=false;
                 cached.Paths = new Paths64();
                 cached.IsValid = false;
                 cached.UsePointFallback = true;
@@ -674,10 +684,26 @@ namespace LiraSlabZones.Core
                 cached.UsePointFallback = false;
                 if (slabOutline != null && slabOutline.Count >= 3)
                 {
-                    var outlinePath = OutlinePathCache.GetValue(
-                        slabOutline, points => new CachedOutlinePath(ToPath(points))).Path;
+                    var cachedOutline = OutlinePathCache.GetValue(
+                        slabOutline, points => new CachedOutlinePath(ToPath(points)));
+                    var outlinePath=cachedOutline.Path;
                     cached.Paths = Clipper.Intersect(
                         new Paths64 { platePath }, new Paths64 { outlinePath }, FillRule.NonZero);
+                    if(edgeCoverMm>0 && cached.Paths.Count>0)
+                    {
+                        Paths64 domain;
+                        lock(cachedOutline)
+                        {
+                            if(!cachedOutline.Inset.TryGetValue(edgeCoverMm,out domain!))
+                            {
+                                domain=Clipper.InflatePaths(new Paths64 {outlinePath},-edgeCoverMm*GeometryScale/1000,
+                                    JoinType.Miter,EndType.Polygon);
+                                cachedOutline.Inset[edgeCoverMm]=domain;
+                            }
+                        }
+                        cached.Paths=Clipper.Intersect(cached.Paths,domain,FillRule.NonZero);
+                        cached.CoverOnly=cached.Paths.Sum(p=>Math.Abs(Clipper.Area(p)))<0.5;
+                    }
                 }
                 else
                 {
@@ -813,7 +839,8 @@ namespace LiraSlabZones.Core
         {
             for (var i = 0; i < zones.Count; i++)
             for (var j = i + 1; j < zones.Count; j++)
-                if (ZonesHavePositiveAreaOverlap(zones[i], zones[j])) return true;
+                if (ZonesHavePositiveAreaOverlap(zones[i], zones[j]) &&
+                    !ZoneEditor.IsAllowedLongitudinalLapOverlap(zones[i], zones[j])) return true;
             return false;
         }
 

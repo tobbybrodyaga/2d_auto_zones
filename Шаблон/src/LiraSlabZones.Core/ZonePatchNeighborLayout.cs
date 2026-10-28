@@ -1906,6 +1906,8 @@ namespace LiraSlabZones.Core
 
         private static AdditionalZone CloneZone(AdditionalZone source) => new AdditionalZone
         {
+            BoundaryConstraints = source.BoundaryConstraints,
+            BoundaryCheck = source.BoundaryCheck,
             ZoneId = source.ZoneId,
             ElementId = source.ElementId,
             Layer = source.Layer,
@@ -1940,6 +1942,9 @@ namespace LiraSlabZones.Core
             CountInSpec = source.CountInSpec,
             CountBars = source.CountBars,
             VerticalLegMm = source.VerticalLegMm,
+            BendAtStart = source.BendAtStart,
+            BendAtEnd = source.BendAtEnd,
+            DesignEdgeCoverMm = source.DesignEdgeCoverMm,
             AxisNameX = source.AxisNameX,
             AxisPosXM = source.AxisPosXM,
             OffsetFromAxisXMm = source.OffsetFromAxisXMm,
@@ -2154,6 +2159,8 @@ namespace LiraSlabZones.Core
 
         private static bool IsWithinOneElementAllowance(Entry entry)
         {
+            if (entry.Zone.BoundaryConstraints != null &&
+                !entry.Zone.BoundaryConstraints.Allows(entry.Zone.Contour, entry.Zone.Direction)) return false;
             var bounds = Bounds(entry.Zone.Contour);
             var cross = Cross(bounds, entry.Zone.Direction);
             var axial = Axial(bounds, entry.Zone.Direction);
@@ -2523,7 +2530,8 @@ namespace LiraSlabZones.Core
 
         private static bool IsAdjustable(AdditionalZone zone) =>
             zone != null && zone.FamilyKind == ZoneFamilyKind.Straight && zone.BarStepMm > 0 &&
-            zone.Contour != null && zone.Contour.Count >= 3;
+            zone.Contour != null && zone.Contour.Count >= 3 &&
+            (zone.BoundaryConstraints == null || zone.BoundaryConstraints.Allows(zone.Contour, zone.Direction));
 
         private static void ApplyInterval(Entry entry)
         {
@@ -2533,11 +2541,18 @@ namespace LiraSlabZones.Core
             var maxX = zone.Direction == ZoneDirection.X ? bounds.MaxX : entry.CrossMax;
             var minY = zone.Direction == ZoneDirection.X ? entry.CrossMin : bounds.MinY;
             var maxY = zone.Direction == ZoneDirection.X ? entry.CrossMax : bounds.MaxY;
-            zone.Contour = new List<Point3>
+            var proposed = new List<Point3>
             {
                 new Point3(minX, minY, zone.LevelZM), new Point3(maxX, minY, zone.LevelZM),
                 new Point3(maxX, maxY, zone.LevelZM), new Point3(minX, maxY, zone.LevelZM)
             };
+            if (zone.BoundaryConstraints != null && !zone.BoundaryConstraints.Allows(proposed, zone.Direction))
+            {
+                var originalCross = Cross(bounds, zone.Direction);
+                entry.CrossMin = originalCross.Min; entry.CrossMax = originalCross.Max;
+                return;
+            }
+            zone.Contour = proposed;
             zone.Placement = new Point3((minX + maxX) * 0.5, (minY + maxY) * 0.5, zone.LevelZM);
             zone.WidthM = entry.CrossMax - entry.CrossMin;
             zone.WidthMm = UnitConversion.MetersToMm(zone.WidthM);

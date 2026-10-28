@@ -36,6 +36,16 @@ namespace LiraSlabZones.Revit2023
                     "Разделите эти зоны в предпросмотре перед размещением.");
 
             var settings = analysis.Settings ?? AppConfig.LoadEffectiveSettings();
+            var layout = ZoneLayoutDiagnostics.Evaluate(analysis.Plates, analysis.Zones, settings,
+                0, true, analysis.Outline, analysis.Openings);
+            var blocker = layout.Issues.FirstOrDefault(i => i.Kind == ZoneIssueKind.InvalidZone ||
+                i.Kind == ZoneIssueKind.PlacementConflict || i.Kind == ZoneIssueKind.InterZoneStep);
+            if (blocker != null) throw new InvalidOperationException("Размещение остановлено: " + blocker.Message);
+            var boundaryIssues = new ZoneBoundaryConstraints(analysis.Outline, analysis.Openings,
+                settings.EdgeOffsetMm).CheckZones(analysis.Zones);
+            if (boundaryIssues.Count > 0)
+                throw new InvalidOperationException($"Размещение остановлено: {boundaryIssues.Count} зон " +
+                    "нарушают контур/отступ. " + boundaryIssues[0].Message);
             var transform = LiraRevitTransform.For(analysis, settings);
             var cache = new Dictionary<string, FamilySymbol?>(StringComparer.OrdinalIgnoreCase);
 
@@ -111,6 +121,7 @@ namespace LiraSlabZones.Revit2023
             if (inst == null) return "Revit не создал экземпляр";
 
             var zoneRot = zone.Direction == ZoneDirection.Y ? 90.0 : 0.0;
+            if (zone.BendAtStart && !zone.BendAtEnd) zoneRot += 180;
             var totalRot = (settings.RotationDeg + zoneRot) * Math.PI / 180.0;
             if (Math.Abs(totalRot) > 1e-9)
             {
@@ -122,13 +133,14 @@ namespace LiraSlabZones.Revit2023
                         Line.CreateBound(pt, pt + XYZ.BasisZ),
                         totalRot);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // ignore rotate failures
+                    doc.Delete(inst.Id);
+                    return "не удалось повернуть семейство: " + ex.Message;
                 }
             }
 
-            var lengthFeet = zone.LengthMm > 0
+            var lengthFeet = (zone.BendAtStart || zone.BendAtEnd) ? zone.LengthM * MetersToFeet : zone.LengthMm > 0
                 ? UnitConversion.MmToFeet(zone.LengthMm)
                 : zone.LengthM * MetersToFeet;
             var widthFeet = zone.WidthMm > 0
@@ -136,6 +148,13 @@ namespace LiraSlabZones.Revit2023
                 : zone.WidthM * MetersToFeet;
 
             TrySetDoubleParam(inst, new[] { "Длина", "Длинна", "Length", "L", "l" }, lengthFeet);
+            if ((zone.BendAtStart || zone.BendAtEnd) && !TrySetDoubleParam(inst,
+                new[] { "Высота загиба", "Длина загиба", "Вертикальный участок", "Высота", "Height", "H", "h" },
+                UnitConversion.MmToFeet(zone.VerticalLegMm)))
+            {
+                doc.Delete(inst.Id);
+                return "у семейства нет доступного параметра высоты загиба";
+            }
             TrySetDoubleParam(inst, new[] { "Ширина", "Width", "B", "b" }, widthFeet);
             TrySetDoubleParam(inst, new[] { "Шаг", "Step", "Spacing" }, UnitConversion.MmToFeet(zone.BarStepMm));
             TrySetDoubleParam(inst, new[] { "Ø", "Диаметр", "Diameter", "d" }, UnitConversion.MmToFeet(zone.DiameterMm));
@@ -163,17 +182,17 @@ namespace LiraSlabZones.Revit2023
             return null;
         }
 
-        private static void TrySetDoubleParam(Element e, string[] names, double valueFeet)
+        private static bool TrySetDoubleParam(Element e, string[] names, double valueFeet)
         {
             foreach (var name in names)
             {
                 var p = e.LookupParameter(name) ?? e.GetParameters(name).FirstOrDefault();
                 if (p != null && !p.IsReadOnly && p.StorageType == StorageType.Double)
                 {
-                    p.Set(valueFeet);
-                    return;
+                    return p.Set(valueFeet);
                 }
             }
+            return false;
         }
 
         private static void TrySetStringParam(Element e, string[] names, string value)

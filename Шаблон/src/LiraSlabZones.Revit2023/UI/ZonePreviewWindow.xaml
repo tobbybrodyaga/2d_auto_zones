@@ -381,6 +381,7 @@
               <RowDefinition Height="Auto"/>
               <RowDefinition Height="Auto"/>
               <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Margin="0,1">
               <Border Width="9" Height="9" Background="#DC143C" Margin="0,0,4,0"/>
@@ -413,6 +414,10 @@
             <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="0,1">
               <Border Width="9" Height="9" Background="#DAA520" Margin="0,0,4,0"/>
               <TextBlock Text="Предупреждение" FontSize="10"/>
+            </StackPanel>
+            <StackPanel Grid.Row="4" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,1">
+              <Border Width="9" Height="9" Background="Red" Margin="0,0,4,0"/>
+              <TextBlock Text="Нарушен отступ от грани" FontSize="10"/>
             </StackPanel>
           </Grid>
         </StackPanel>

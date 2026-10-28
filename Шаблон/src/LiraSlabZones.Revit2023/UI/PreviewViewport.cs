@@ -20,6 +20,7 @@ namespace LiraSlabZones.Revit2023.UI
         private const int MaxUndoActions = 50;
         private enum ResizeEdge { None, Left, Right, Bottom, Top }
         private AnalysisResult? _result;
+        private IList<AdditionalZone>? _coverageReference;
         private readonly List<string> _undo = new();
         private string? _pendingUndo;
         private AnalysisSettings _settings = new AnalysisSettings();
@@ -116,6 +117,7 @@ namespace LiraSlabZones.Revit2023.UI
         private static readonly Pen MeshPen = FreezePen(Color.FromArgb(80, 55, 65, 81), 0.4);
 
         public double Zoom => _zoom;
+        public ZoneConflictGroupResult? LastConflictResolution { get; private set; }
         public int EditableZoneCount => _result?.PatchPreviewOnly == true
             ? _patchCandidateZones.Count
             : _result?.Zones.Count ?? 0;
@@ -221,7 +223,8 @@ namespace LiraSlabZones.Revit2023.UI
         }
 
         public void SetData(AnalysisResult? result, AnalysisSettings settings, bool showMesh, bool showIso,
-            bool showAxes = false, bool fitView = true, bool showPatchBoundaries = false)
+            bool showAxes = false, bool fitView = true, bool showPatchBoundaries = false,
+            IList<AdditionalZone>? coverageReference = null)
         {
             if (!ReferenceEquals(_result, result))
             {
@@ -230,6 +233,8 @@ namespace LiraSlabZones.Revit2023.UI
                 _selectedPatchFrameId = null;
             }
             _result = result;
+            LastConflictResolution = null;
+            _coverageReference = coverageReference;
             _settings = settings;
             _showMesh = showMesh;
             _showIso = showIso;
@@ -1268,6 +1273,7 @@ namespace LiraSlabZones.Revit2023.UI
         private void CommitEdits(AdditionalZone? keepSelected = null)
         {
             if (_result == null) return;
+            LastConflictResolution = null;
             var zones = WorkingZones;
             if (_pendingUndo != null)
             {
@@ -1345,7 +1351,11 @@ namespace LiraSlabZones.Revit2023.UI
         private void RebuildPatchGeometryCache()
         {
             if (_result == null) return;
+            // Отступ проверяется независимо от включения подрезки/загибов и связи с Revit.
+            var boundaryConstraints = new ZoneBoundaryConstraints(_result.Outline, _result.Openings, _settings.EdgeOffsetMm);
+            foreach (var zone in _patchCandidateZones) zone.BoundaryConstraints = boundaryConstraints;
             var useSavedZones = _patchCandidateZones.Count > 0;
+            var coverageBaseline = useSavedZones ? boundaryConstraints.Snapshot(_patchCandidateZones) : null;
             _drawPatchFrames.Clear();
             var activeElementIds = new HashSet<int>(_result.Patches.SelectMany(patch => patch.ElementIds));
             var contoursByLevel = new Dictionary<int, List<IList<Point3>>>();
@@ -1473,6 +1483,7 @@ namespace LiraSlabZones.Revit2023.UI
                     splitFrame.Patches.AddRange(frame.Patches);
                     var selection = new ZonePatchFrameSelection
                     {
+                        BoundaryConstraints = boundaryConstraints,
                         Patches = splitFrame.Patches,
                         Elements = frameElements.Values.ToList(),
                         SlabOutline = _result.Outline?.ToList() ?? new List<Point3>(),
@@ -1490,6 +1501,7 @@ namespace LiraSlabZones.Revit2023.UI
                     _drawPatchFrames.Add(splitFrame);
                 }
             }
+            coverageBaseline ??= boundaryConstraints.Snapshot(_patchCandidateZones);
             if (!useSavedZones)
             {
                 ZonePatchZoneBuilder.MergeAdjacentCompatibleZones(
@@ -1569,6 +1581,19 @@ namespace LiraSlabZones.Revit2023.UI
                 : null;
             ZoneEditor.RemoveZonesWithoutRequiredElements(
                 _patchCandidateZones, _result.Plates, _settings, _result.Outline, _result.Openings);
+            boundaryConstraints.PreserveCoverage(_patchCandidateZones, coverageBaseline,
+                _result.Plates, _settings, _result.Outline, _result.Openings);
+            if (_coverageReference != null)
+                boundaryConstraints.PreserveCoverage(_patchCandidateZones, _coverageReference,
+                    _result.Plates, _settings, _result.Outline, _result.Openings);
+            _coverageReference = null;
+            if (!useSavedZones)
+            {
+                ZoneBoundaryLayoutSolver.Repair(_patchCandidateZones, _result.Plates, _settings,
+                    _result.Outline, _result.Openings, boundaryConstraints, revitAxes);
+                LastConflictResolution = ZoneConflictGroupLayout.Resolve(_patchCandidateZones, _result.Plates,
+                    _settings, _result.Outline, _result.Openings, boundaryConstraints, revitAxes);
+            }
             AssignZoneIds(_patchCandidateZones);
             RefreshPatchFrameZones();
             _result.Zones = _patchCandidateZones.ToList();
@@ -1735,6 +1760,8 @@ namespace LiraSlabZones.Revit2023.UI
             var diagnostics = ZoneLayoutDiagnostics.Evaluate(
                 _result.Plates, WorkingZones, _settings, 0, true,
                 _result.Outline, _result.Openings);
+            diagnostics.Issues.AddRange(new ZoneBoundaryConstraints(_result.Outline, _result.Openings,
+                _settings.EdgeOffsetMm).CheckZones(WorkingZones));
             if (_result.PatchPreviewOnly)
                 diagnostics.Issues.RemoveAll(issue => issue.Kind == ZoneIssueKind.InterZoneStep &&
                     issue.RelatedZoneId > 0 && IsSamePatchFrame(issue.ZoneId, issue.RelatedZoneId));
@@ -1747,6 +1774,7 @@ namespace LiraSlabZones.Revit2023.UI
 
         private static int DiagnosticPriority(ZoneIssueKind kind) => kind switch
         {
+            ZoneIssueKind.BoundaryClearance => 3,
             ZoneIssueKind.InvalidZone => 0,
             ZoneIssueKind.EmptyZone => 1,
             ZoneIssueKind.OverlongBar => 2,
@@ -1760,6 +1788,7 @@ namespace LiraSlabZones.Revit2023.UI
 
         private static Brush? DiagnosticBrush(ZoneIssueKind kind) => kind switch
         {
+            ZoneIssueKind.BoundaryClearance => Brushes.Red,
             ZoneIssueKind.InvalidZone => Brushes.Crimson,
             ZoneIssueKind.EmptyZone => Brushes.MediumVioletRed,
             ZoneIssueKind.OverlongBar => Brushes.MediumPurple,
@@ -2128,7 +2157,8 @@ namespace LiraSlabZones.Revit2023.UI
             var count = Math.Max(1, zone.BarCount);
             var warning = zone.Comment?.Contains("анкеровка выходит за контур плиты") == true;
             return ($"{zone.DiameterMm}-{lenMm} ×{count}",
-                warning ? $"шаг {step} · анкеровка вне плиты" : $"шаг {step}");
+                warning ? $"шаг {step} · анкеровка вне плиты" : (zone.BendAtStart || zone.BendAtEnd)
+                    ? $"шаг {step} · {(zone.BendAtStart && zone.BendAtEnd ? "П" : "Г")} H{zone.VerticalLegMm:0}" : $"шаг {step}");
         }
 
         /// <summary>

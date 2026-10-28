@@ -18,11 +18,20 @@ namespace LiraSlabZones.Core
             ZonePatchFrameSelection frame, double elevationZM, AnalysisSettings settings,
             IDictionary<AdditionalZone, ZonePatchFrameBounds>? sourceBoundsByZone = null,
             IDictionary<AdditionalZone, ZonePatchFrameBounds>? patchBoundsByZone = null)
+            => ZoneBoundaryLayoutSolver.Build(frame, elevationZM, settings,
+                sourceBoundsByZone, patchBoundsByZone);
+
+        internal static List<AdditionalZone> BuildCandidate(
+            ZonePatchFrameSelection frame, double elevationZM, AnalysisSettings settings,
+            IDictionary<AdditionalZone, ZonePatchFrameBounds>? sourceBoundsByZone,
+            IDictionary<AdditionalZone, ZonePatchFrameBounds>? patchBoundsByZone,
+            bool preferShortAnchorage = false)
         {
             var zones = new List<AdditionalZone>();
             if (frame == null || settings == null || frame.Patches == null || frame.Patches.Count == 0)
                 return zones;
             if (string.IsNullOrWhiteSpace(settings.ConcreteClass)) return zones;
+            frame = ZoneOuterEdgeLayout.Prepare(frame);
 
             settings.SyncBackgroundAsFromBars();
             var concrete = RebarTables.NormalizeConcrete(settings.ConcreteClass);
@@ -61,7 +70,7 @@ namespace LiraSlabZones.Core
                 var referenceStep = BackgroundStep(settings, layerGroup.Key);
                 if (minDiameter <= 0 || referenceStep <= 0) continue;
 
-                var option = SelectSmallestDiameter(requiredAs, settings, minDiameter);
+                var option = SelectSmallestDiameter(requiredAs, settings, minDiameter, preferShortAnchorage);
                 if (option == null || option.DiameterMm <= 0) continue;
 
                 var direction = RebarTables.DirectionForLayer(layerGroup.Key, settings.ReverseZoneDirections);
@@ -70,6 +79,16 @@ namespace LiraSlabZones.Core
                 var widthM = direction == ZoneDirection.X
                     ? zoneBounds.MaxY - zoneBounds.MinY
                     : zoneBounds.MaxX - zoneBounds.MinX;
+                // Кратную ширину учитываем до проверки края, а не после сдвига соседей.
+                if (frame.BoundaryConstraints != null)
+                {
+                    widthM = Math.Ceiling((widthM * 1000 - 1e-6) / option.StepMm) * option.StepMm / 1000.0;
+                    var center = direction == ZoneDirection.X
+                        ? (zoneBounds.MinY + zoneBounds.MaxY) / 2 : (zoneBounds.MinX + zoneBounds.MaxX) / 2;
+                    zoneBounds = direction == ZoneDirection.X
+                        ? new ZonePatchFrameBounds(zoneBounds.MinX, zoneBounds.MaxX, center - widthM / 2, center + widthM / 2)
+                        : new ZonePatchFrameBounds(center - widthM / 2, center + widthM / 2, zoneBounds.MinY, zoneBounds.MaxY);
+                }
                 var widthMm = UnitConversion.MetersToMm(widthM);
                 var barCount = Math.Max(1, (int)Math.Floor(widthMm / option.StepMm + 1e-9) + 1);
                 var backgroundAs = BackgroundAs(settings, layerGroup.Key);
@@ -81,14 +100,48 @@ namespace LiraSlabZones.Core
                     direction == ZoneDirection.X ? zoneBounds.MaxX : zoneBounds.MaxY);
                 var startMm = coreStartMm - anchorageMm;
                 var endMm = coreEndMm + anchorageMm;
+                var preflightMessage = string.Empty;
+                if (frame.BoundaryConstraints != null)
+                {
+                    var draft = direction == ZoneDirection.X
+                        ? new ZonePatchFrameBounds(startMm / 1000, endMm / 1000, zoneBounds.MinY, zoneBounds.MaxY)
+                        : new ZonePatchFrameBounds(zoneBounds.MinX, zoneBounds.MaxX, startMm / 1000, endMm / 1000);
+                    var required = direction == ZoneDirection.X
+                        ? new ZonePatchFrameBounds(startMm / 1000, endMm / 1000, layerBounds.MinY, layerBounds.MaxY)
+                        : new ZonePatchFrameBounds(layerBounds.MinX, layerBounds.MaxX, startMm / 1000, endMm / 1000);
+                    frame.BoundaryConstraints.TryFit(draft, required, direction, out var fitted, out var checkedBoundary);
+                    preflightMessage = checkedBoundary.Message;
+                    zoneBounds = direction == ZoneDirection.X
+                        ? new ZonePatchFrameBounds(zoneBounds.MinX, zoneBounds.MaxX, fitted.MinY, fitted.MaxY)
+                        : new ZonePatchFrameBounds(fitted.MinX, fitted.MaxX, zoneBounds.MinY, zoneBounds.MaxY);
+                }
                 const double maxStraightLengthMm = 11700;
                 var lapOverlapMm = 2.0 * RebarTables.LapLenMm(concrete, option.DiameterMm);
-                var segments = RoundSegmentsToFamilyLengths(
-                    SplitStraightLength(startMm, endMm, maxStraightLengthMm, lapOverlapMm));
+                var requiredSegments = SplitStraightLength(startMm, endMm, maxStraightLengthMm, lapOverlapMm);
+                var segments = RoundSegmentsToFamilyLengths(requiredSegments);
 
                 for (var segmentIndex = 0; segmentIndex < segments.Count; segmentIndex++)
                 {
                     var segment = segments[segmentIndex];
+                    var segmentMessage = string.Empty;
+                    if (frame.BoundaryConstraints != null)
+                    {
+                        // У типовой длины запас может уходить только в допустимую сторону.
+                        // Обязательный интервал содержит исходную анкеровку и весь нахлёст.
+                        var requiredSegment = requiredSegments[segmentIndex];
+                        ZonePatchFrameBounds Band(double from, double to) => direction == ZoneDirection.X
+                            ? new ZonePatchFrameBounds(from / 1000, to / 1000, zoneBounds.MinY, zoneBounds.MaxY)
+                            : new ZonePatchFrameBounds(zoneBounds.MinX, zoneBounds.MaxX, from / 1000, to / 1000);
+                        if (frame.BoundaryConstraints.TryFit(Band(segment.StartMm, segment.EndMm),
+                            Band(requiredSegment.StartMm, requiredSegment.EndMm), direction, out var fitted, out var report))
+                        {
+                            segment = direction == ZoneDirection.X
+                                ? (fitted.MinX * 1000, fitted.MaxX * 1000)
+                                : (fitted.MinY * 1000, fitted.MaxY * 1000);
+                            if (!string.IsNullOrEmpty(report.Message))
+                                segmentMessage = report.Message.Replace("До разбиения:", "Типовая длина:");
+                        }
+                    }
                     var minX = direction == ZoneDirection.X
                         ? UnitConversion.MmToMeters(segment.StartMm) : zoneBounds.MinX;
                     var maxX = direction == ZoneDirection.X
@@ -109,6 +162,9 @@ namespace LiraSlabZones.Core
                         (segmentIndex == segments.Count - 1 && AnchorEndOutsideOutline(
                             frame.SlabOutline, direction, segment.EndMm, zoneBounds, barCount));
                     var commentParts = new List<string>();
+                    if (!string.IsNullOrEmpty(preflightMessage)) commentParts.Add(preflightMessage);
+                    if (!string.IsNullOrEmpty(segmentMessage)) commentParts.Add(segmentMessage);
+                    if (preferShortAnchorage) commentParts.Add("автоподбор: вариант с меньшей анкеровкой");
                     if (!option.MeetsDemand)
                         commentParts.Add("пик ΔAs превышает вместимость доступного Ø");
                     if (segments.Count > 1)
@@ -122,6 +178,7 @@ namespace LiraSlabZones.Core
                     SetLayerAs(rebar, layerGroup.Key, requiredAs + backgroundAs);
                     zones.Add(new AdditionalZone
                     {
+                        BoundaryConstraints = frame.BoundaryConstraints,
                         ZoneId = zones.Count + 1,
                         ElementId = nodeIds.FirstOrDefault(),
                         Layer = layerGroup.Key,
@@ -158,6 +215,14 @@ namespace LiraSlabZones.Core
                         AlphaCoef = settings.AlphaCoef,
                         RotationDeg = direction == ZoneDirection.Y ? 90 : 0
                     });
+                    var created = zones[zones.Count - 1];
+                    if (frame.BoundaryConstraints != null)
+                    {
+                        ZoneOuterEdgeLayout.Adapt(created, layerBounds, settings, frame.BoundaryConstraints);
+                        created.BoundaryCheck = frame.BoundaryConstraints.Check(created.Contour, direction);
+                        if (!created.BoundaryCheck.Allowed) created.StatusColor = "warn";
+                        else if (created.BoundaryCheck.CenteredException) created.StatusColor = "warn";
+                    }
                     sourceBoundsByZone?.Add(zones[zones.Count - 1], layerBounds);
                     patchBoundsByZone?.Add(zones[zones.Count - 1], patchBounds);
                 }
@@ -554,6 +619,7 @@ namespace LiraSlabZones.Core
                 ? UnitConversion.MmToMeters(endMm) : cross.Max;
             var candidate = new AdditionalZone
             {
+                BoundaryConstraints = first.BoundaryConstraints,
                 ZoneId = first.ZoneId,
                 ElementId = first.ElementId,
                 Layer = first.Layer,
@@ -590,6 +656,8 @@ namespace LiraSlabZones.Core
             };
             SetLayerAs(candidate.Rebar, candidate.Layer,
                 candidate.AsRequired > 0 ? candidate.AsRequired : candidate.AsAdditional);
+            if (candidate.BoundaryConstraints != null &&
+                !candidate.BoundaryConstraints.Allows(candidate.Contour, candidate.Direction)) return false;
 
             var layerZones = zones.Where(zone => zone.Layer == first.Layer &&
                 !ReferenceEquals(zone, first) && !ReferenceEquals(zone, second)).ToList();
@@ -746,7 +814,7 @@ namespace LiraSlabZones.Core
         }
 
         private static DiameterStepOption? SelectSmallestDiameter(
-            double requiredAs, AnalysisSettings settings, int minDiameterMm)
+            double requiredAs, AnalysisSettings settings, int minDiameterMm, bool preferShortAnchorage = false)
         {
             var maxDiameter = settings.MaxDiameterMm > 0 ? settings.MaxDiameterMm : 36;
             var excluded = settings.ExcludedZoneDiametersMm?.ToArray();
@@ -774,7 +842,7 @@ namespace LiraSlabZones.Core
                 .ToList();
 
             return options.Where(option => option.MeetsDemand)
-                       .OrderBy(option => option.CapacityAs)
+                       .OrderBy(option => preferShortAnchorage ? option.DiameterMm : option.CapacityAs)
                        .ThenByDescending(option => option.StepMm)
                        .ThenBy(option => option.DiameterMm)
                        .FirstOrDefault()

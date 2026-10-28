@@ -88,8 +88,14 @@ namespace LiraSlabZones.Core
             {
                 report.Chains++;
                 var dx = ChainShift(chain, axes, obstacles, edgeM, vertical: true, report);
+                if (chain.Any(zone => zone.BoundaryConstraints != null &&
+                    !zone.BoundaryConstraints.Allows(zone.Contour.Select(p =>
+                        new Point3(p.X + dx, p.Y, p.Z)).ToList(), zone.Direction))) dx = 0;
                 if (Math.Abs(dx) > 1e-9) Translate(chain, dx, 0);
                 var dy = ChainShift(chain, axes, obstacles, edgeM, vertical: false, report);
+                if (chain.Any(zone => zone.BoundaryConstraints != null &&
+                    !zone.BoundaryConstraints.Allows(zone.Contour.Select(p =>
+                        new Point3(p.X, p.Y + dy, p.Z)).ToList(), zone.Direction))) dy = 0;
                 if (Math.Abs(dy) > 1e-9) Translate(chain, 0, dy);
                 if (Math.Abs(dx) > 1e-9 || Math.Abs(dy) > 1e-9)
                 {
@@ -184,6 +190,10 @@ namespace LiraSlabZones.Core
             int bestTied = -1;
             foreach (var shift in candidates.Where(c => c >= lo - 1e-9 && c <= hi + 1e-9))
             {
+                if (chain.Any(zone => zone.BoundaryConstraints != null &&
+                    !zone.BoundaryConstraints.Allows(zone.Contour.Select(p => new Point3(
+                        p.X + (vertical ? shift : 0), p.Y + (vertical ? 0 : shift), p.Z)).ToList(),
+                        zone.Direction))) continue;
                 var tied = bounds.Count(b => EdgeFracs(b.Shift(shift, vertical), axes, vertical)
                     .Any(frac => Math.Abs(frac) <= TieToleranceMm));
                 if (tied > bestTied || (tied == bestTied && Math.Abs(shift) < Math.Abs(best)))
