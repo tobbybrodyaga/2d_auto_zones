@@ -15,7 +15,7 @@ namespace LiraSlabZones.Revit2023.UI
     /// <summary>
     /// Векторный превью-холст: зум без размытия, зоны и контур по сетке КЭ.
     /// </summary>
-    public sealed class PreviewViewport : FrameworkElement
+    public sealed partial class PreviewViewport : FrameworkElement
     {
         private const int MaxUndoActions = 50;
         private enum ResizeEdge { None, Left, Right, Bottom, Top }
@@ -118,6 +118,7 @@ namespace LiraSlabZones.Revit2023.UI
 
         public double Zoom => _zoom;
         public ZoneConflictGroupResult? LastConflictResolution { get; private set; }
+        public Action<string, int, int>? LayoutProgress { get; set; }
         public int EditableZoneCount => _result?.PatchPreviewOnly == true
             ? _patchCandidateZones.Count
             : _result?.Zones.Count ?? 0;
@@ -1351,6 +1352,7 @@ namespace LiraSlabZones.Revit2023.UI
         private void RebuildPatchGeometryCache()
         {
             if (_result == null) return;
+            LayoutProgress?.Invoke("Мозаика и расчётные пятна", 0, 0);
             // Отступ проверяется независимо от включения подрезки/загибов и связи с Revit.
             var boundaryConstraints = new ZoneBoundaryConstraints(_result.Outline, _result.Openings, _settings.EdgeOffsetMm);
             foreach (var zone in _patchCandidateZones) zone.BoundaryConstraints = boundaryConstraints;
@@ -1435,6 +1437,7 @@ namespace LiraSlabZones.Revit2023.UI
             }
             foreach (var frame in frames)
             {
+                LayoutProgress?.Invoke("Подбор зон по пятнам", frames.IndexOf(frame) + 1, frames.Count);
                 var frameElements = new Dictionary<(RebarLayer Layer, int ElementId), ZonePatchFrameElement>();
                 foreach (var patch in frame.Patches)
                 foreach (var id in patch.ElementIds)
@@ -1504,6 +1507,7 @@ namespace LiraSlabZones.Revit2023.UI
             coverageBaseline ??= boundaryConstraints.Snapshot(_patchCandidateZones);
             if (!useSavedZones)
             {
+                LayoutProgress?.Invoke("Увязка соседних рядов", 0, 0);
                 ZonePatchZoneBuilder.MergeAdjacentCompatibleZones(
                     _patchCandidateZones, patchSourceBounds, patchOuterBounds);
                 ZonePatchZoneBuilder.MergeShiftableAdjacentZonesAlongBars(
@@ -1589,11 +1593,15 @@ namespace LiraSlabZones.Revit2023.UI
             _coverageReference = null;
             if (!useSavedZones)
             {
+                LayoutProgress?.Invoke("Границы и отступы", 0, 0);
                 ZoneBoundaryLayoutSolver.Repair(_patchCandidateZones, _result.Plates, _settings,
                     _result.Outline, _result.Openings, boundaryConstraints, revitAxes);
                 LastConflictResolution = ZoneConflictGroupLayout.Resolve(_patchCandidateZones, _result.Plates,
-                    _settings, _result.Outline, _result.Openings, boundaryConstraints, revitAxes);
+                    _settings, _result.Outline, _result.Openings, boundaryConstraints, revitAxes, LayoutProgress);
+                ZoneLayoutCompactness.Refine(_patchCandidateZones, _result.Plates, _settings,
+                    _result.Outline, _result.Openings, boundaryConstraints, LayoutProgress);
             }
+            LayoutProgress?.Invoke("Подготовка изображения и диагностики", 0, 0);
             AssignZoneIds(_patchCandidateZones);
             RefreshPatchFrameZones();
             _result.Zones = _patchCandidateZones.ToList();
@@ -1770,6 +1778,14 @@ namespace LiraSlabZones.Revit2023.UI
                 diagnostics.Issues.AddRange(RevitGridAlignment.Check(
                     WorkingZones, revitAxes, _result.Outline, _result.Openings, _settings.EdgeOffsetMm));
             _result.Diagnostics = diagnostics;
+            if (LastConflictResolution != null)
+            {
+                LastConflictResolution.PairsAfter = diagnostics.Issues
+                    .Where(i => i.Kind == ZoneIssueKind.PlacementConflict || i.Kind == ZoneIssueKind.InterZoneStep)
+                    .Select(i => (Math.Min(i.ZoneId,i.RelatedZoneId),Math.Max(i.ZoneId,i.RelatedZoneId))).Distinct().Count();
+                LastConflictResolution.BoundaryAfter = diagnostics.Issues.Count(i => i.Kind == ZoneIssueKind.BoundaryClearance);
+                LastConflictResolution.InvalidZoneIds = WorkingZones.Where(z => !z.IsValid || RebarTables.ExceedsMaxBarLength(z)).Select(z=>z.ZoneId).ToList();
+            }
         }
 
         private static int DiagnosticPriority(ZoneIssueKind kind) => kind switch
@@ -1812,13 +1828,14 @@ namespace LiraSlabZones.Revit2023.UI
         {
             if (_zoom < 1.6) return;
             var typeface = new Typeface("Segoe UI");
+            var occupied = new List<Rect>();
 
-            foreach (var shape in _drawPatchZones)
+            foreach (var shape in _drawPatchZones.OrderByDescending(s => s.Zone.ZoneId == _selectedZoneId))
             {
                 var zone = shape.Zone;
                 if (zone.DiameterMm <= 0 || !shape.Intersects(minX, maxX, minY, maxY)) continue;
 
-                var center = Tx((shape.MinX + shape.MaxX) * 0.5,
+                var center = new Point((shape.MinX + shape.MaxX) * 0.5,
                     (shape.MinY + shape.MaxY) * 0.5);
                 center.Y += shape.PatchLabelOffsetYpx / scale;
                 var (line1, line2) = BuildZoneLabelLines(zone);
@@ -1835,6 +1852,10 @@ namespace LiraSlabZones.Revit2023.UI
                 var background = new Rect(center.X - textWidth / 2 - padding,
                     center.Y - textHeight / 2 - padding,
                     textWidth + padding * 2, textHeight + padding * 2);
+                var reserved = background;
+                reserved.Inflate(3 / scale, 3 / scale);
+                if (occupied.Any(r => r.IntersectsWith(reserved))) continue;
+                occupied.Add(reserved);
 
                 dc.PushTransform(new ScaleTransform(1, -1, center.X, center.Y));
                 dc.DrawRectangle(new SolidColorBrush(Color.FromArgb(220, 255, 255, 255)), null, background);

@@ -100,7 +100,15 @@ namespace LiraSlabZones.Core
             bool HasPlanLength11700(AdditionalZone zone) =>
                 Math.Abs(zone.LengthMm - 11700) <= 1 ||
                 Math.Abs(UnitConversion.MetersToMm(zone.LengthM) - 11700) <= 1;
-            if (!HasPlanLength11700(first) && !HasPlanLength11700(second))
+            var planned = !string.IsNullOrEmpty(first.SpliceGroupId) && first.SpliceGroupId == second.SpliceGroupId &&
+                first.SplicePartCount > 1 && first.SplicePartCount == second.SplicePartCount &&
+                first.SplicePartIndex >= 0 && second.SplicePartIndex >= 0 &&
+                first.SplicePartIndex < first.SplicePartCount && second.SplicePartIndex < second.SplicePartCount &&
+                Math.Abs(first.SplicePartIndex-second.SplicePartIndex) == 1 &&
+                first.DiameterMm == second.DiameterMm && first.BarStepMm == second.BarStepMm &&
+                first.Layer == second.Layer && first.Direction == second.Direction &&
+                !ExceedsMaxBarLength(first) && !ExceedsMaxBarLength(second);
+            if (!planned && !HasPlanLength11700(first) && !HasPlanLength11700(second))
                 return 0;
             var governing = first.DiameterMm >= second.DiameterMm ? first : second;
             return 2 * LapLenMm(governing.ConcreteClass, governing.DiameterMm);

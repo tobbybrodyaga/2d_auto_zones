@@ -119,6 +119,7 @@ namespace LiraSlabZones.Core
                 var lapOverlapMm = 2.0 * RebarTables.LapLenMm(concrete, option.DiameterMm);
                 var requiredSegments = SplitStraightLength(startMm, endMm, maxStraightLengthMm, lapOverlapMm);
                 var segments = RoundSegmentsToFamilyLengths(requiredSegments);
+                var spliceGroup = segments.Count > 1 ? Guid.NewGuid().ToString("N") : string.Empty;
 
                 for (var segmentIndex = 0; segmentIndex < segments.Count; segmentIndex++)
                 {
@@ -179,6 +180,9 @@ namespace LiraSlabZones.Core
                     zones.Add(new AdditionalZone
                     {
                         BoundaryConstraints = frame.BoundaryConstraints,
+                        SpliceGroupId = spliceGroup,
+                        SplicePartIndex = segmentIndex,
+                        SplicePartCount = segments.Count > 1 ? segments.Count : 0,
                         ZoneId = zones.Count + 1,
                         ElementId = nodeIds.FirstOrDefault(),
                         Layer = layerGroup.Key,

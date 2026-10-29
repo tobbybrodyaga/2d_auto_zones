@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -28,23 +29,27 @@ namespace LiraSlabZones.Revit2023.UI
         private bool _suppressZoneFamilySelection;
         private readonly HashSet<int> _excludedZoneDiameters = new HashSet<int>();
         private readonly DispatcherTimer _rebuildTimer;
+        private DispatcherTimer? _progressTimer;
+        private volatile bool _closed;
 
         public ZonePreviewWindow()
         {
             InitializeComponent();
             PreviewKeyDown += (_, e) =>
             {
+                if (_busy) return;
                 if (e.Key != Key.Z || Keyboard.Modifiers != ModifierKeys.Control ||
                     Keyboard.FocusedElement is TextBoxBase || Keyboard.FocusedElement is ComboBox) return;
                 e.Handled = Viewport.UndoLastEdit();
             };
             TxtStatus.Text = "Выберите: Демо / JSON / Анализ ЛИРА";
             _rebuildTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(280) };
-            _rebuildTimer.Tick += (_, __) =>
+            _rebuildTimer.Tick += async (_, __) =>
             {
                 _rebuildTimer.Stop();
-                RebuildZonesPreservingView(fromUi: true);
+                await RebuildZonesPreservingViewAsync(fromUi: true);
             };
+            Closed += (_, __) => { _closed=true; _rebuildTimer.Stop(); _progressTimer?.Stop(); };
             Loaded += (_, __) =>
             {
                 Viewport.ZoneSelected += z =>
@@ -540,10 +545,10 @@ namespace LiraSlabZones.Revit2023.UI
             }
         }
 
-        private void BtnRebuild_Click(object sender, RoutedEventArgs e) =>
-            RebuildZonesPreservingView(fromUi: true);
+        private async void BtnRebuild_Click(object sender, RoutedEventArgs e) =>
+            await RebuildZonesPreservingViewAsync(fromUi: true);
 
-        private void BtnBoundaryEditor_Click(object sender, RoutedEventArgs e)
+        private async void BtnBoundaryEditor_Click(object sender, RoutedEventArgs e)
         {
             if (_result == null || _result.Plates.Count == 0) return;
             try
@@ -554,7 +559,7 @@ namespace LiraSlabZones.Revit2023.UI
                 _result.Openings = editor.EditedOpenings;
                 _result.BoundaryConditions = editor.EditedBoundaries;
                 _result.UseCustomOpenings = true;
-                RebuildZonesPreservingView(fromUi: false);
+                await RebuildZonesPreservingViewAsync(fromUi: false);
                 Log($"Геометрия обновлена: отверстий {_result.Openings.Count}, границ {_result.BoundaryConditions.Count}", "ok");
             }
             catch (Exception ex)
@@ -566,7 +571,7 @@ namespace LiraSlabZones.Revit2023.UI
             }
         }
 
-        private void BtnApplyBoundaryRules_Checked(object sender, RoutedEventArgs e)
+        private async void BtnApplyBoundaryRules_Checked(object sender, RoutedEventArgs e)
         {
             UpdateBoundaryRulesToggleLabel();
             if (_suppressUiEvents || _updatingBoundaryToggle) return;
@@ -594,7 +599,7 @@ namespace LiraSlabZones.Revit2023.UI
                 current.ApplySlabBoundaryAndOpeningRules = true;
                 current.ApplyHoleRules = true;
                 current.ApplyBentRules = true;
-                RebuildZonesPreservingView(fromUi: true);
+                await RebuildZonesPreservingViewAsync(fromUi: true);
                 Log($"Учтены отверстия и контур плиты; толщина {current.SlabThicknessMm:0.##} мм, " +
                     $"защитные слои {current.CoverBottomMm:0.##}/{current.CoverTopMm:0.##} мм", "ok");
             }
@@ -609,7 +614,7 @@ namespace LiraSlabZones.Revit2023.UI
             }
         }
 
-        private void BtnApplyBoundaryRules_Unchecked(object sender, RoutedEventArgs e)
+        private async void BtnApplyBoundaryRules_Unchecked(object sender, RoutedEventArgs e)
         {
             UpdateBoundaryRulesToggleLabel();
             if (_suppressUiEvents || _updatingBoundaryToggle || _result == null) return;
@@ -617,7 +622,7 @@ namespace LiraSlabZones.Revit2023.UI
             settings.ApplySlabBoundaryAndOpeningRules = false;
             settings.ApplyHoleRules = false;
             settings.ApplyBentRules = false;
-            RebuildZonesPreservingView(fromUi: true);
+            await RebuildZonesPreservingViewAsync(fromUi: true);
             Log("Обработка границы плиты и отверстий отключена; зоны пересобраны без подрезки и загибов", "ok");
         }
 
@@ -686,43 +691,106 @@ namespace LiraSlabZones.Revit2023.UI
                 : null;
 
             var settings = fromUi ? ReadSettingsFromUi() : (_result.Settings ?? new AnalysisSettings());
-            var all = _result.AllPlates != null && _result.AllPlates.Count > 0 ? _result.AllPlates : _plates;
-            if (all.Count == 0 && _plates.Count == 0) return;
+            var rebuilt = RecalculateData(_result, settings, _plates);
+            CompleteRebuild(rebuilt, settings,
+                previousZones != null && Math.Abs(previousElevation - rebuilt.ElevationZM) < 0.001 &&
+                SameCoverageInputs(previousSettings, JObject.FromObject(settings)) ? previousZones : null);
+        }
 
-            var levels = _result.AvailableLevels;
-            var axes = _result.Axes;
-            var openings = _result.Openings;
-            var useCustomOpenings = _result.UseCustomOpenings;
-            var boundaries = _result.BoundaryConditions;
-            var units = _result.UnitsNote;
-
+        private static AnalysisResult RecalculateData(AnalysisResult source, AnalysisSettings settings, List<LiraPlateElement> fallback)
+        {
+            var all = source.AllPlates?.Count > 0 ? source.AllPlates : fallback;
             AnalysisResult rebuilt;
-            if (TryGetLayerOnlyChanges(_result.Settings, settings, out var changedLayers))
-                rebuilt = SlabZoneAnalyzer.RebuildLayers(_result, settings, changedLayers);
+            if (TryGetLayerOnlyChanges(source.Settings, settings, out var changedLayers))
+                rebuilt = SlabZoneAnalyzer.RebuildLayers(source, settings, changedLayers);
             else if (!double.IsNaN(settings.TargetElevationZM))
-                rebuilt = SlabZoneAnalyzer.RebuildForElevation(_result, settings.TargetElevationZM, settings);
+                rebuilt = SlabZoneAnalyzer.RebuildForElevation(source, settings.TargetElevationZM, settings);
             else
             {
                 rebuilt = SlabZoneAnalyzer.BuildResult(
-                    _result.DocumentName,
-                    _result.DocumentPath,
-                    _result.NodeCount,
-                    _plates.Count > 0 ? _plates : all,
+                    source.DocumentName,
+                    source.DocumentPath,
+                    source.NodeCount,
+                    fallback.Count > 0 ? fallback : all,
                     settings,
-                    axes,
-                    _result.ElevationZM,
-                    _result.ElevationLabel,
+                    source.Axes,
+                    source.ElevationZM,
+                    source.ElevationLabel,
                     skipLevelFilter: true,
-                    openings: openings,
-                    useCustomOpenings: useCustomOpenings);
+                    openings: source.Openings,
+                    useCustomOpenings: source.UseCustomOpenings);
                 rebuilt.AllPlates = all;
-                rebuilt.AvailableLevels = levels;
+                rebuilt.AvailableLevels = source.AvailableLevels;
             }
 
-            rebuilt.BoundaryConditions = boundaries;
-            rebuilt.UnitsNote = units;
+            rebuilt.BoundaryConditions = source.BoundaryConditions;
+            rebuilt.UnitsNote = source.UnitsNote;
             rebuilt.Settings = settings;
-            rebuilt.CoordinateFrame = _result.CoordinateFrame;
+            rebuilt.CoordinateFrame = source.CoordinateFrame;
+            return rebuilt;
+        }
+
+        private async Task RebuildZonesPreservingViewAsync(bool fromUi)
+        {
+            if (_result == null || _busy || _closed) return;
+            var source = _result;
+            var settings = fromUi ? ReadSettingsFromUi() : source.Settings;
+            var previousSettings = JObject.FromObject(source.Settings);
+            var previous = source.PatchPreviewOnly ? new ZoneBoundaryConstraints(source.Outline, source.Openings,
+                settings.EdgeOffsetMm).Snapshot(Viewport.PlacementZones) : null;
+            var fallback = _plates;
+            _busy = true;
+            _rebuildTimer.Stop();
+            SettingsScroll.IsEnabled = InfoPanel.IsEnabled = CanvasTools.IsEnabled = false;
+            Viewport.IsHitTestVisible = false;
+            RebuildProgressPanel.Visibility = Visibility.Visible;
+            TxtRebuildStage.Text = "КЭ, мозаика и расчётные пятна…";
+            var watch = Stopwatch.StartNew();
+            TxtRebuildElapsed.Text = "Прошло 0 с";
+            _progressTimer = new DispatcherTimer { Interval=TimeSpan.FromMilliseconds(200) };
+            _progressTimer.Tick += (_, __) => TxtRebuildElapsed.Text = $"Прошло {watch.Elapsed.TotalSeconds:0} с · окно продолжает работать";
+            _progressTimer.Start();
+            try
+            {
+                var rebuilt = await Task.Run(() => RecalculateData(source, settings, fallback));
+                if (_closed) return;
+                rebuilt.RevitLink = _revitLink?.Matches(rebuilt.ElevationZM) == true ? _revitLink : null;
+                var reference = previous != null && Math.Abs(source.ElevationZM-rebuilt.ElevationZM)<0.001 &&
+                    SameCoverageInputs(previousSettings,JObject.FromObject(settings)) ? previous : null;
+                Action<string,int,int> progress = (stage, done, total) =>
+                {
+                    if (_closed) throw new OperationCanceledException();
+                    if (Dispatcher.HasShutdownStarted) return;
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (!_closed && _busy) TxtRebuildStage.Text = total>0 ? $"{stage}: {done} из {total}" : stage+"…";
+                    }),DispatcherPriority.Background);
+                };
+                var prepared = await PreviewViewport.PrepareLayoutAsync(rebuilt,settings,reference,progress);
+                if (_closed) return;
+                CompleteRebuild(rebuilt,settings,null,prepared);
+                Log($"Пересчёт завершён за {watch.Elapsed.TotalSeconds:0.#} с; зон {rebuilt.Zones.Count}", "ok");
+            }
+            catch(Exception ex)
+            {
+                if (!_closed) {Log("Ошибка пересчёта: "+ex.Message,"error");TxtStatus.Text="Пересчёт не завершён: "+ex.Message;}
+            }
+            finally
+            {
+                _progressTimer?.Stop();
+                _busy = false;
+                if (!_closed)
+                {
+                    SettingsScroll.IsEnabled=InfoPanel.IsEnabled=CanvasTools.IsEnabled=true;
+                    Viewport.IsHitTestVisible=true;
+                    RebuildProgressPanel.Visibility=Visibility.Collapsed;
+                }
+            }
+        }
+
+        private void CompleteRebuild(AnalysisResult rebuilt, AnalysisSettings settings,
+            IList<AdditionalZone>? reference, PreviewViewport.PreparedLayout? prepared = null)
+        {
             _result = rebuilt;
             _plates = rebuilt.Plates ?? _plates;
             UpdatePreviewModeControls(rebuilt);
@@ -737,9 +805,16 @@ namespace LiraSlabZones.Revit2023.UI
                 : $"пластин: {rebuilt.PlateCount}, зон: {rebuilt.Zones.Count}";
             TxtSource.Text = $"{rebuilt.DocumentName}\n{resultKind}" +
                              (string.IsNullOrWhiteSpace(rebuilt.ElevationLabel) ? "" : $"\n{rebuilt.ElevationLabel}");
-            PushToViewport(fitView: false, coverageReference:
-                previousZones != null && Math.Abs(previousElevation - rebuilt.ElevationZM) < 0.001 &&
-                SameCoverageInputs(previousSettings, JObject.FromObject(settings)) ? previousZones : null);
+            if (prepared == null) PushToViewport(fitView: false, coverageReference: reference);
+            else
+            {
+                AttachRevitLink();
+                Viewport.ApplyPreparedLayout(prepared,ChkShowMesh.IsChecked==true,ChkShowIso.IsChecked==true,
+                    ChkShowAxes.IsChecked==true,ChkShowPatchBoundaries.IsChecked==true);
+                TxtZoom.Text=$"{Viewport.Zoom*100:0}%";
+                TxtTitle.Text=$"{rebuilt.DocumentName} · {rebuilt.ElevationLabel}";
+                RefreshStats();
+            }
             var summary = rebuilt.PatchPreviewOnly ? $"пятен {rebuilt.Patches.Count}" : $"зон {rebuilt.Zones.Count}{gate}";
             Log($"Пересчёт: {summary} (вид сохранён)",
                 rebuilt.PatchPreviewOnly || settings.CanLayoutAdditionalZones(out _) ? "ok" : "warn");
@@ -1343,7 +1418,7 @@ namespace LiraSlabZones.Revit2023.UI
                 }
                 else
                 {
-                    TxtLayoutGate.Text = $"Прямые стержни · анкеровка и нахлёст по {s.ConcreteClass} · максимум 11700 мм.";
+                    TxtLayoutGate.Text = $"Стержни · анкеровка и нахлёст по {s.ConcreteClass} · максимум 11700 мм.";
                     TxtLayoutGate.Foreground = new System.Windows.Media.SolidColorBrush(
                         System.Windows.Media.Color.FromRgb(0x15, 0x80, 0x3D));
                 }

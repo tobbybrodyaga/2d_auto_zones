@@ -19,6 +19,7 @@
   <ItemGroup>
     <Compile Include="..\LiraSlabZones.Revit2023\UI\ZonePreviewWindow.xaml.cs" Link="UI\ZonePreviewWindow.xaml.cs" />
     <Compile Include="..\LiraSlabZones.Revit2023\UI\PreviewViewport.cs" Link="UI\PreviewViewport.cs" />
+    <Compile Include="..\LiraSlabZones.Revit2023\UI\PreviewViewport.Prepared.cs" Link="UI\PreviewViewport.Prepared.cs" />
     <Compile Include="..\LiraSlabZones.Revit2023\UI\BoundaryEditorViewport.cs" Link="UI\BoundaryEditorViewport.cs" />
     <Compile Include="..\LiraSlabZones.Revit2023\UI\BoundaryEditorWindow.xaml.cs" Link="UI\BoundaryEditorWindow.xaml.cs" />
     <Compile Include="..\LiraSlabZones.Revit2023\UI\SlabBoundaryRulesWindow.xaml.cs" Link="UI\SlabBoundaryRulesWindow.xaml.cs" />

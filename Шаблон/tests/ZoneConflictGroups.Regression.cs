@@ -59,6 +59,25 @@ public static class ZoneConflictGroupsRegression
         Assert(!ZoneCoverageRules.CoversOrBridgesGap(splice,across,RebarLayer.As1,2,null,null),
             "Side overlaps must not be disguised as valid longitudinal splices");
         Console.WriteLine("PASS coverage across approved splices; insufficient laps and lateral overlaps remain invalid");
+        var bentA=new AdditionalZone {ZoneId=1,Layer=RebarLayer.As4,Direction=ZoneDirection.Y,DiameterMm=8,BarStepMm=200,
+            AsCoveredCm2PerM=2.51,ConcreteClass="B30",LengthM=10,LengthMm=10150,VerticalLegMm=142,FamilyKind=ZoneFamilyKind.L,
+            BendAtStart=true,Contour=Rect(2,2.4,0,10),SpliceGroupId="planned",SplicePartCount=2,SplicePartIndex=0};
+        var bentB=new AdditionalZone {ZoneId=2,Layer=RebarLayer.As4,Direction=ZoneDirection.Y,DiameterMm=8,BarStepMm=200,
+            AsCoveredCm2PerM=2.51,ConcreteClass="B30",LengthM=5.3,LengthMm=5450,VerticalLegMm=142,FamilyKind=ZoneFamilyKind.L,
+            BendAtEnd=true,Contour=Rect(2,2.4,8.7,14),SpliceGroupId="planned",SplicePartCount=2,SplicePartIndex=1};
+        Assert(!ZoneEditor.HasPlacementConflict(bentA,bentB),"Planned clipped/bent lap was mistaken for a collision without an 11700 mm bar");
+        bentB.Contour=Rect(2,2.4,8.702,14.002);
+        Assert(ZoneEditor.HasPlacementConflict(bentA,bentB),"Planned metadata allowed insufficient lap length");
+        bentB.Contour=Rect(2.002,2.402,8.7,14);
+        Assert(ZoneEditor.HasPlacementConflict(bentA,bentB),"Planned metadata allowed lateral overlaps");
+        bentB.Contour=Rect(2,2.4,8.7,14);bentB.SpliceGroupId="different";
+        Assert(ZoneEditor.HasPlacementConflict(bentA,bentB),"Unrelated short bars were treated as a planned splice");
+        bentB.SpliceGroupId="planned";bentB.SplicePartIndex=0;
+        Assert(ZoneEditor.HasPlacementConflict(bentA,bentB),"Duplicate parts were treated as a splice");
+        var pairIssues=ZoneLayoutDiagnostics.Evaluate(new List<LiraPlateElement>(),new List<AdditionalZone>{bentA,bentB},Settings(),0,true,null,null)
+            .Issues.Where(i=>i.Kind==ZoneIssueKind.PlacementConflict).ToList();
+        Assert(pairIssues.Count==2 && pairIssues.All(i=>i.RelatedZoneId>0),"Conflict diagnostic lost its paired-zone identity");
+        Console.WriteLine("PASS planned bent splices retain minimum lap and band alignment; unrelated/duplicate parts remain conflicts");
         var outline=Rect(0,20,0,10);
         var c=new ZoneBoundaryConstraints(outline,null,50);
         var cfg=Settings();

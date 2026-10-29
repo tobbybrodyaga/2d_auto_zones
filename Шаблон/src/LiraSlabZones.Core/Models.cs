@@ -176,6 +176,10 @@ namespace LiraSlabZones.Core
         public bool BendAtEnd { get; set; }
         /// <summary>Защитная полоса бетона исключается только из геометрической проверки покрытия, не из данных КЭ.</summary>
         public double DesignEdgeCoverMm { get; set; }
+        /// <summary>Связь частей одного автоматически разделённого продольного ряда.</summary>
+        public string SpliceGroupId { get; set; } = string.Empty;
+        public int SplicePartIndex { get; set; }
+        public int SplicePartCount { get; set; }
 
         /// <summary>Привязка к ближайшей вертикальной оси (имя).</summary>
         public string AxisNameX { get; set; } = string.Empty;

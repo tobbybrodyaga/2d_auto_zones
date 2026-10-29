@@ -198,12 +198,20 @@ public static class ZoneBoundaryRegression
         var longZones=ZonePatchZoneBuilder.Build(longFrame,0,cfg).OrderBy(z=>z.Contour.Min(p=>p.X)).ToList();
         AssertSolved(longFrame,longZones,cfg);
         Assert(longZones.Count==3,"A long frame must retain the required stock-length split");
+        Assert(longZones.All(z=>z.SplicePartCount==3 && !string.IsNullOrEmpty(z.SpliceGroupId)) &&
+            longZones.Select(z=>z.SpliceGroupId).Distinct().Count()==1,"Longitudinal parts lost their joint identity");
         for(var i=0;i<longZones.Count-1;i++)
         {
             var overlap=longZones[i].Contour.Max(p=>p.X)-longZones[i+1].Contour.Min(p=>p.X);
             Assert(overlap*1000+0.001>=2*RebarTables.LapLenMm(cfg.ConcreteClass,longZones[i].DiameterMm),
                 "Stock placement shortened the mandatory longitudinal lap");
         }
+
+        var edgeSplice=Frame(Rect(0,14,0,5),B(0,14,2,2.4));
+        var bentSplice=ZonePatchZoneBuilder.Build(edgeSplice,0,cfg);
+        AssertSolved(edgeSplice,bentSplice,cfg);
+        Assert(bentSplice.Count==2 && bentSplice.All(z=>z.LengthMm<11700 && z.FamilyKind==ZoneFamilyKind.L),
+            "Clipped terminating parts must retain their planned lap without an artificial full stock bar");
 
         var repairFrame=Frame(Rect(0,6,0,10),B(0.5,4,2,2.4),B(0.5,4,7,7.4));
         var repairZones=new List<AdditionalZone>();

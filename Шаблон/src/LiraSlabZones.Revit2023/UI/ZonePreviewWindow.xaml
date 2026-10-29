@@ -60,13 +60,15 @@
 
   <Grid Margin="10">
     <Grid.ColumnDefinitions>
-      <ColumnDefinition Width="300"/>
-      <ColumnDefinition Width="*"/>
-      <ColumnDefinition Width="280"/>
+      <ColumnDefinition Width="300" MinWidth="220" MaxWidth="640"/>
+      <ColumnDefinition Width="7"/>
+      <ColumnDefinition Width="*" MinWidth="300"/>
+      <ColumnDefinition Width="7"/>
+      <ColumnDefinition Width="280" MinWidth="220" MaxWidth="640"/>
     </Grid.ColumnDefinitions>
 
     <!-- LEFT: settings -->
-    <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Margin="0,0,8,0">
+    <ScrollViewer x:Name="SettingsScroll" Grid.Column="0" VerticalScrollBarVisibility="Auto" Margin="0,0,4,0">
       <StackPanel>
         <TextBlock Text="LiraSlabZones" FontSize="18" FontWeight="Bold" Foreground="#111827"/>
         <TextBlock TextWrapping="Wrap" Margin="0,2,0,10" Foreground="#6B7280"
@@ -306,16 +308,18 @@
     </ScrollViewer>
 
     <!-- CENTER: canvas -->
-    <Border Grid.Column="1" BorderBrush="#D1D5DB" BorderThickness="1" Background="White" CornerRadius="2">
+    <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="#D1D5DB"
+                  ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" ShowsPreview="True" ToolTip="Изменить ширину настроек"/>
+    <Border Grid.Column="2" BorderBrush="#D1D5DB" BorderThickness="1" Background="White" CornerRadius="2">
       <Grid>
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="*"/>
           <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <DockPanel Margin="8,6">
-          <TextBlock x:Name="TxtTitle" Text="Плита — превью" FontWeight="SemiBold" FontSize="14"/>
-          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <DockPanel x:Name="CanvasTools" Margin="8,6">
+          <TextBlock x:Name="TxtTitle" DockPanel.Dock="Top" Margin="0,0,0,5" Text="Плита — превью" FontWeight="SemiBold" FontSize="14"/>
+          <WrapPanel Orientation="Horizontal">
             <Button Content="↖" Width="28" Margin="0,0,3,0" Click="BtnEditSelect_Click" ToolTip="Выбор зоны"/>
             <Button x:Name="BtnEditMove" Content="✥" Width="28" Margin="0,0,3,0" Click="BtnEditMove_Click" ToolTip="Переместить: протяните выбранную зону"/>
             <Button x:Name="BtnEditResize" Content="↔" Width="28" Margin="0,0,3,0" Click="BtnEditResize_Click" ToolTip="Изменить размер: перетащите край зоны"/>
@@ -348,7 +352,7 @@
             <TextBlock Text="As3" Margin="0,0,10,0"/>
             <Border Width="14" Height="14" Background="#DC2626" Margin="0,0,4,0"/>
             <TextBlock Text="As4"/>
-          </StackPanel>
+          </WrapPanel>
         </DockPanel>
         <ScrollViewer x:Name="PreviewScroll" Grid.Row="1"
                       HorizontalScrollBarVisibility="Disabled"
@@ -357,6 +361,16 @@
                                  Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=ScrollViewer}}"
                                  Height="{Binding ActualHeight, RelativeSource={RelativeSource AncestorType=ScrollViewer}}"/>
         </ScrollViewer>
+        <Border x:Name="RebuildProgressPanel" Grid.Row="1" Panel.ZIndex="10" Visibility="Collapsed"
+                VerticalAlignment="Top" Margin="18" Padding="16" Background="#F5F9FF" BorderBrush="#93B4F5"
+                BorderThickness="1" CornerRadius="6" IsHitTestVisible="False">
+          <StackPanel>
+            <TextBlock Text="Пересчёт зон" FontSize="16" FontWeight="SemiBold" Foreground="#1D4ED8"/>
+            <TextBlock x:Name="TxtRebuildStage" Text="Подготовка данных…" TextWrapping="Wrap" Margin="0,6,0,3"/>
+            <ProgressBar x:Name="RebuildProgressBar" Height="6" IsIndeterminate="True" Margin="0,6"/>
+            <TextBlock x:Name="TxtRebuildElapsed" Text="Прошло 0 с" FontSize="11" Foreground="#64748B"/>
+          </StackPanel>
+        </Border>
         <StatusBar Grid.Row="2" Background="#F9FAFB">
           <StatusBarItem>
             <TextBlock x:Name="TxtStatus" Text="Загрузите демо или JSON"/>
@@ -366,7 +380,9 @@
     </Border>
 
     <!-- RIGHT: info -->
-    <DockPanel Grid.Column="2" Margin="8,0,0,0">
+    <GridSplitter Grid.Column="3" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="#D1D5DB"
+                  ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" ShowsPreview="True" ToolTip="Изменить ширину свойств и статистики"/>
+    <DockPanel x:Name="InfoPanel" Grid.Column="4" Margin="4,0,0,0">
       <GroupBox Header="ТЭПы / статистика" DockPanel.Dock="Top">
         <StackPanel>
           <TextBlock x:Name="TxtStats" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"/>

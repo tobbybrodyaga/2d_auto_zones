@@ -24,7 +24,12 @@ namespace LiraSlabZones.Core
     {
         public static ZoneConflictGroupResult Resolve(IList<AdditionalZone> zones, IList<LiraPlateElement> plates,
             AnalysisSettings settings, IList<Point3>? outline, IList<OpeningInfo>? openings,
-            ZoneBoundaryConstraints constraints, IList<AlignAxis>? axes = null)
+            ZoneBoundaryConstraints constraints, IList<AlignAxis>? axes = null) =>
+            Resolve(zones, plates, settings, outline, openings, constraints, axes, null);
+
+        public static ZoneConflictGroupResult Resolve(IList<AdditionalZone> zones, IList<LiraPlateElement> plates,
+            AnalysisSettings settings, IList<Point3>? outline, IList<OpeningInfo>? openings,
+            ZoneBoundaryConstraints constraints, IList<AlignAxis>? axes, Action<string,int,int>? progress)
         {
             var result=new ZoneConflictGroupResult {PairsBefore=ZoneBoundaryLayoutSolver.ConflictCount(zones,settings),
                 BoundaryChecked=constraints.HasOutline,BoundaryBefore=zones.Count(z=>!constraints.Check(z.Contour,z.Direction).Allowed)};
@@ -33,7 +38,7 @@ namespace LiraSlabZones.Core
             // Повторяем автоматически, пока число пар строго уменьшается.
             for(var pass=0;pass<result.PairsBefore && previous>0;pass++)
             {
-                var step=ResolveCore(zones,plates,settings,outline,openings,constraints,axes,null,0);
+                var step=ResolveCore(zones,plates,settings,outline,openings,constraints,axes,null,0,progress);
                 result.GroupsResolved+=step.GroupsResolved;
                 foreach(var rejection in step.Rejections) result.Rejections[rejection.Key]=rejection.Value;
                 if(step.PairsAfter>=previous) break;
@@ -61,7 +66,7 @@ namespace LiraSlabZones.Core
 
         private static ZoneConflictGroupResult ResolveCore(IList<AdditionalZone> zones,IList<LiraPlateElement> plates,
             AnalysisSettings settings,IList<Point3>? outline,IList<OpeningInfo>? openings,
-            ZoneBoundaryConstraints constraints,IList<AlignAxis>? axes,List<List<AdditionalZone>>? requested,int depth)
+            ZoneBoundaryConstraints constraints,IList<AlignAxis>? axes,List<List<AdditionalZone>>? requested,int depth,Action<string,int,int>? progress = null)
         {
             var result = new ZoneConflictGroupResult { PairsBefore=ZoneBoundaryLayoutSolver.ConflictCount(zones,settings),
                 BoundaryChecked=constraints.HasOutline, BoundaryBefore=zones.Count(z=>!constraints.Check(z.Contour,z.Direction).Allowed) };
@@ -72,6 +77,7 @@ namespace LiraSlabZones.Core
             var groups=requested??Components(zones,settings);
             foreach(var group in groups)
             {
+                progress?.Invoke("Устранение конфликтов", groups.IndexOf(group)+1, groups.Count);
                 if(group.Any(z=>!zones.Contains(z))) continue;
                 if(ZoneBoundaryLayoutSolver.ConflictCount(group,settings)==0) {result.GroupsResolved++;continue;}
                 if(group.Any(z=>z.FamilyKind!=ZoneFamilyKind.Straight && !z.BendAtStart && !z.BendAtEnd))
@@ -88,6 +94,7 @@ namespace LiraSlabZones.Core
                 var accepted=false;
                 var rejections=new Dictionary<string,int>();
                 var attempts=0;
+                List<AdditionalZone>? bestProposal=null;
                 var haloComponents=Components(allLayer,settings);
                 List<AdditionalZone>? halo=null;
                 var haloCost=int.MaxValue;
@@ -107,6 +114,7 @@ namespace LiraSlabZones.Core
                     if(replacement.Any(z=>!z.IsValid)) return Reject("Capacity");
                     if(replacement.Any(z=>!constraints.Check(z.Contour,z.Direction).Allowed)) return Reject("Boundary");
                     var adjust=attempts++<4;
+                    if (attempts % 16 == 0) progress?.Invoke($"Группа {groups.IndexOf(group)+1}/{groups.Count}: проверено вариантов {attempts}",0,0);
                     var proposal=adjust || axes?.Count>0 ? constraints.Snapshot(fixedZones.Concat(replacement))
                         :fixedZones.Concat(replacement).ToList();
                     // Соседям разрешено совместно уступить запас габарита; принятие остаётся атомарным.
@@ -139,20 +147,7 @@ namespace LiraSlabZones.Core
                     {RememberHalo(badSpacing.SelectMany(p=>new[]{p.First,p.Second}).Where(i=>i<fixedZones.Count));return Reject("Spacing");}
                     if(ZoneBoundaryLayoutSolver.ConflictCount(proposal,settings)>=ZoneBoundaryLayoutSolver.ConflictCount(allLayer,settings)) return Reject("NoProgress");
                     if(!ZoneBoundaryLayoutSolver.PreservesRequiredLayout(allLayer,proposal,plates,settings,outline,openings,constraints,out var reason)) return Reject(reason);
-                    foreach(var original in group) zones.Remove(original);
-                    foreach(var zone in proposal.Skip(fixedZones.Count))
-                    {
-                        zone.Comment+="; конфликтующая группа переразложена без коллизий";
-                        zones.Add(zone);
-                    }
-                    // Привязка может сдвинуть и фиксированного соседа: переносим проверенное состояние.
-                    for(var i=0;i<fixedZones.Count;i++)
-                    {
-                        if(!ReferenceEquals(proposal[i],fixedZones[i]))
-                            JsonConvert.PopulateObject(JsonConvert.SerializeObject(proposal[i]),fixedZones[i],
-                                new JsonSerializerSettings {ObjectCreationHandling=ObjectCreationHandling.Replace});
-                        fixedZones[i].BoundaryConstraints=constraints;
-                    }
+                    bestProposal=constraints.Snapshot(proposal);
                     return true;
                 }
                 bool TryPositions(List<AdditionalZone> replacement)
@@ -191,17 +186,32 @@ namespace LiraSlabZones.Core
                     {
                         var frame=Frame(targets,layer,direction,bg,outline,constraints);
                         var merged=ZoneBoundaryLayoutSolver.Build(frame,group[0].LevelZM,variant);
-                        if(merged.Count>0 && TryPositions(merged)) { accepted=true; break; }
+                        if(merged.Count>0 && TryPositions(merged)) {accepted=true;break;}
                         foreach(var stripPlan in Strips(targets,layer,direction,bg,group[0].LevelZM,variant,outline,constraints))
-                            if(TryPlan(stripPlan)) { accepted=true; break; }
+                        {
+                            if(TryPlan(stripPlan)){accepted=true;break;}
+                        }
                         if(accepted) break;
                     }
+                }
+                if(bestProposal!=null)
+                {
+                    foreach(var original in group) zones.Remove(original);
+                    foreach(var zone in bestProposal.Skip(fixedZones.Count))
+                    {zone.Comment+="; группа переразложена без коллизий";zones.Add(zone);}
+                    for(var i=0;i<fixedZones.Count;i++)
+                    {
+                        JsonConvert.PopulateObject(JsonConvert.SerializeObject(bestProposal[i]),fixedZones[i],
+                            new JsonSerializerSettings {ObjectCreationHandling=ObjectCreationHandling.Replace});
+                        fixedZones[i].BoundaryConstraints=constraints;
+                    }
+                    accepted=true;
                 }
                 if(!accepted && halo!=null && depth<2)
                 {
                     var expanded=group.Concat(halo).Distinct().ToList();
                     var nested=ResolveCore(zones,plates,settings,outline,openings,constraints,axes,
-                        new List<List<AdditionalZone>>{expanded},depth+1);
+                        new List<List<AdditionalZone>>{expanded},depth+1,progress);
                     accepted=nested.GroupsResolved>0;
                 }
                 if(accepted) result.GroupsResolved++;
@@ -237,6 +247,7 @@ namespace LiraSlabZones.Core
             }
             return result;
         }
+
 
         private static void AdjustNeighbors(List<AdditionalZone> proposal,int fixedCount,IList<LiraPlateElement> plates,
             AnalysisSettings settings,IList<Point3> outline,IList<OpeningInfo>? openings)
@@ -296,20 +307,29 @@ namespace LiraSlabZones.Core
                             ? bounds[p].MinY<cross+width+gap && bounds[p].MaxY>cross-gap
                             : bounds[p].MinX<cross+width+gap && bounds[p].MaxX>cross-gap).ToList();
                         if(nearby.Count==0) continue;
-                        var axialMin=direction==ZoneDirection.X?nearby.Min(p=>bounds[p].MinX):nearby.Min(p=>bounds[p].MinY);
-                        var axialMax=direction==ZoneDirection.X?nearby.Max(p=>bounds[p].MaxX):nearby.Max(p=>bounds[p].MaxY);
+                        var minDiameter=layer==RebarLayer.As1 || layer==RebarLayer.As2 ? settings.BgBottomDiameterMm : settings.BgTopDiameterMm;
+                        var diameter=BarCapacity.MinDiameterForAs(nearby.Max(p=>p.Rebar.Get(layer))-bg,step,
+                            settings.MaxDiameterMm>0?settings.MaxDiameterMm:36,minDiameter,settings.ExcludedZoneDiametersMm?.ToArray());
+                        if(diameter<=0){valid=false;break;}
+                        var requiredGap=2*RebarTables.AnchorageLenMm(settings.ConcreteClass,diameter)/1000.0+0.05;
+                        foreach(var component in ZoneLayoutCompactness.AxialComponents(nearby,direction,requiredGap))
+                        {
+                        var axialMin=direction==ZoneDirection.X?component.Min(p=>bounds[p].MinX):component.Min(p=>bounds[p].MinY);
+                        var axialMax=direction==ZoneDirection.X?component.Max(p=>bounds[p].MaxX):component.Max(p=>bounds[p].MaxY);
                         var b=direction==ZoneDirection.X?new ZonePatchFrameBounds(axialMin,axialMax,cross,cross+width)
                             :new ZonePatchFrameBounds(cross,cross+width,axialMin,axialMax);
-                        var proxy=new LiraPlateElement { Id=nearby[0].Id,Contour=Rect(b,level),
+                        var proxy=new LiraPlateElement { Id=component[0].Id,Contour=Rect(b,level),
                             Rebar=new PlateReinforcement {Ok=true} };
-                        var demand=nearby.Max(p=>p.Rebar.Get(layer));
+                        var demand=component.Max(p=>p.Rebar.Get(layer));
                         switch(layer){case RebarLayer.As1:proxy.Rebar.As1=demand;break;case RebarLayer.As2:proxy.Rebar.As2=demand;break;
                             case RebarLayer.As3:proxy.Rebar.As3=demand;break;default:proxy.Rebar.As4=demand;break;}
                         var frame=Frame(new List<LiraPlateElement>{proxy},layer,direction,bg,outline,constraints);
                         var rows=ZonePatchZoneBuilder.BuildCandidate(frame,level,variant,null,null);
-                        foreach(var zone in rows) zone.NodeIds=nearby.Select(p=>p.Id).ToList();
+                        foreach(var zone in rows) zone.NodeIds=component.Select(p=>p.Id).ToList();
                         if(rows.Count==0 || rows.Any(z=>!z.IsValid || !constraints.Check(z.Contour,z.Direction).Allowed)) {valid=false;break;}
                         plan.AddRange(rows);
+                        }
+                        if(!valid) break;
                     }
                     if(valid && plan.Count>0) yield return plan;
                 }

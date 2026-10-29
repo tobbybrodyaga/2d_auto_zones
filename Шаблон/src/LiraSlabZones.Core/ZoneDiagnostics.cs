@@ -162,9 +162,9 @@ namespace LiraSlabZones.Core
                     if (stepPairs.Contains((i, j))) continue;
                     if (!ZoneEditor.HasPlacementConflict(zones[i], zones[j])) continue;
                     result.Issues.Add(Issue(ZoneIssueKind.PlacementConflict, zones[i],
-                        $"Конфликт с зоной №{zones[j].ZoneId}"));
+                        $"Конфликт с зоной №{zones[j].ZoneId}", zones[j].ZoneId));
                     result.Issues.Add(Issue(ZoneIssueKind.PlacementConflict, zones[j],
-                        $"Конфликт с зоной №{zones[i].ZoneId}"));
+                        $"Конфликт с зоной №{zones[i].ZoneId}", zones[i].ZoneId));
                 }
             }
             return result;
