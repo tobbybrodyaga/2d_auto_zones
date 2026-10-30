@@ -26,6 +26,7 @@ namespace LiraSlabZones.Revit2023.UI
         private bool _suppressUiEvents;
         private bool _updatingBoundaryToggle;
         private bool _busy;
+        private CheckBox? _lastSelectedRebarLayer;
         private bool _suppressZoneFamilySelection;
         private readonly HashSet<int> _excludedZoneDiameters = new HashSet<int>();
         private readonly DispatcherTimer _rebuildTimer;
@@ -1113,6 +1114,43 @@ namespace LiraSlabZones.Revit2023.UI
             TxtZoom.Text = $"{Viewport.Zoom * 100:0}%";
         }
 
+        private CheckBox[] RebarLayerChecks => new[] { ChkAs1, ChkAs2, ChkAs3, ChkAs4 };
+
+        private void KeepOnlyRebarLayer(CheckBox selected)
+        {
+            var wasSuppressed = _suppressUiEvents;
+            _suppressUiEvents = true;
+            try
+            {
+                foreach (var layer in RebarLayerChecks)
+                    if (!ReferenceEquals(layer, selected)) layer.IsChecked = false;
+                _lastSelectedRebarLayer = selected;
+            }
+            finally { _suppressUiEvents = wasSuppressed; }
+        }
+
+        private void RebarLayerChanged(object sender, RoutedEventArgs e)
+        {
+            if (!IsLoaded || _suppressUiEvents) return;
+            if (sender is CheckBox layer && layer.IsChecked == true)
+            {
+                _lastSelectedRebarLayer = layer;
+                if (ChkMultipleLayers.IsChecked != true) KeepOnlyRebarLayer(layer);
+            }
+            SettingsChanged(sender, e);
+        }
+
+        private void MultipleLayersChanged(object sender, RoutedEventArgs e)
+        {
+            if (!IsLoaded || _suppressUiEvents || ChkMultipleLayers.IsChecked == true) return;
+            var selected = RebarLayerChecks.Where(layer => layer.IsChecked == true).ToList();
+            if (selected.Count <= 1) return;
+            var keep = _lastSelectedRebarLayer != null && selected.Contains(_lastSelectedRebarLayer)
+                ? _lastSelectedRebarLayer : selected[0];
+            KeepOnlyRebarLayer(keep);
+            SettingsChanged(sender, e);
+        }
+
         private void SettingsChanged(object sender, RoutedEventArgs e)
         {
             if (!IsLoaded || _suppressUiEvents) return;
@@ -1263,6 +1301,10 @@ namespace LiraSlabZones.Revit2023.UI
             ChkAs2.IsChecked = s.ShowAs2;
             ChkAs3.IsChecked = s.ShowAs3;
             ChkAs4.IsChecked = s.ShowAs4;
+            var selectedLayers = RebarLayerChecks.Where(layer => layer.IsChecked == true).ToList();
+            // Сохранённый JSON с несколькими рядами открываем без потери его выбора.
+            if (selectedLayers.Count > 1) ChkMultipleLayers.IsChecked = true;
+            _lastSelectedRebarLayer = selectedLayers.FirstOrDefault();
             SelectCombo(CmbBgBotD, s.BgBottomDiameterMm > 0 ? s.BgBottomDiameterMm.ToString(CultureInfo.InvariantCulture) : "—");
             SelectCombo(CmbBgBotStep, s.BgBottomStepMm > 0 ? s.BgBottomStepMm.ToString(CultureInfo.InvariantCulture) : "—");
             SelectCombo(CmbBgTopD, s.BgTopDiameterMm > 0 ? s.BgTopDiameterMm.ToString(CultureInfo.InvariantCulture) : "—");

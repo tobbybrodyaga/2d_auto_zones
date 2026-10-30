@@ -85,10 +85,13 @@
 
         <GroupBox Header="Слои армирования">
           <StackPanel>
-            <CheckBox x:Name="ChkAs1" Content="Нижняя по X (As1)" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
-            <CheckBox x:Name="ChkAs2" Content="Нижняя по Y (As2)" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
-            <CheckBox x:Name="ChkAs3" Content="Верхняя по X (As3)" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
-            <CheckBox x:Name="ChkAs4" Content="Верхняя по Y (As4)" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+            <CheckBox x:Name="ChkMultipleLayers" Content="Несколько рядов" Margin="0,2,12,8"
+                      ToolTip="Разрешить одновременный показ нескольких рядов As1–As4"
+                      Checked="MultipleLayersChanged" Unchecked="MultipleLayersChanged"/>
+            <CheckBox x:Name="ChkAs1" Content="Нижняя по X (As1)" IsChecked="True" Checked="RebarLayerChanged" Unchecked="RebarLayerChanged"/>
+            <CheckBox x:Name="ChkAs2" Content="Нижняя по Y (As2)" Checked="RebarLayerChanged" Unchecked="RebarLayerChanged"/>
+            <CheckBox x:Name="ChkAs3" Content="Верхняя по X (As3)" Checked="RebarLayerChanged" Unchecked="RebarLayerChanged"/>
+            <CheckBox x:Name="ChkAs4" Content="Верхняя по Y (As4)" Checked="RebarLayerChanged" Unchecked="RebarLayerChanged"/>
           </StackPanel>
         </GroupBox>
 
