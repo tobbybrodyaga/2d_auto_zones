@@ -34,7 +34,7 @@ $timer.Add_Tick({
     if(!$Synchronous){
         $stage=$window.FindName('TxtRebuildStage').Text
         $prefix=($stage -split ':')[0]
-        if($prefix -ne $script:lastStage){Write-Host ('STAGE '+$stage);$script:lastStage=$prefix}
+        if($prefix -ne $script:lastStage){Write-Host ('STAGE '+[Math]::Round($watch.Elapsed.TotalSeconds,1)+'s '+$stage);$script:lastStage=$prefix}
     }
 })
 try {

@@ -220,8 +220,8 @@ namespace LiraSlabZones.Core
             var restored = 0;
             foreach (var group in baseline.GroupBy(z => z.Layer))
             {
-                var before = group.ToList();
-                var after = zones.Where(z => z.Layer == group.Key).ToList();
+                var before = ZoneCoverageRules.Prepare(group.ToList());
+                var after = ZoneCoverageRules.Prepare(zones.Where(z => z.Layer == group.Key).ToList());
                 var background = group.Key switch
                 {
                     RebarLayer.As1 => settings.AsMainAs1, RebarLayer.As2 => settings.AsMainAs2,

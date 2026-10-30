@@ -86,11 +86,13 @@ namespace LiraSlabZones.Core
                 var direction=group[0].Direction;
                 var allLayer=zones.Where(z=>z.Layer==layer).ToList();
                 var fixedZones=allLayer.Where(z=>!group.Contains(z)).ToList();
+                var allCoverage=ZoneCoverageRules.Prepare(allLayer);
+                var fixedCoverage=ZoneCoverageRules.Prepare(fixedZones);
                 var bg=Background(settings,layer);
                 var targets=plates.Where(p=>p.Rebar.Ok && p.Contour.Count>=3 &&
                     p.Rebar.Get(layer)-bg>MosaicBuilder.PositiveResidualToleranceCm2PerM &&
-                    ZoneCoverageRules.CoversOrBridgesGap(allLayer,p,layer,p.Rebar.Get(layer)-bg,outline,openings,true) &&
-                    !ZoneCoverageRules.CoversOrBridgesGap(fixedZones,p,layer,p.Rebar.Get(layer)-bg,outline,openings,true)).ToList();
+                    ZoneCoverageRules.CoversOrBridgesGap(allCoverage,p,layer,p.Rebar.Get(layer)-bg,outline,openings,true) &&
+                    !ZoneCoverageRules.CoversOrBridgesGap(fixedCoverage,p,layer,p.Rebar.Get(layer)-bg,outline,openings,true)).ToList();
                 var accepted=false;
                 var rejections=new Dictionary<string,int>();
                 var attempts=0;

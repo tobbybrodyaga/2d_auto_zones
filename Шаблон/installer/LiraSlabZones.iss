@@ -2,7 +2,7 @@
 ; Сборка: ISCC.exe installer\LiraSlabZones.iss
 
 #define MyAppName "LiraSlabZones"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.3.0"
 #define MyAppPublisher "SUM"
 #define MyAppURL ""
 #define MyAppExeName "LiraSlabZones.PreviewHost.exe"

@@ -5,7 +5,7 @@ using Clipper2Lib;
 
 namespace LiraSlabZones.Core
 {
-    public static class ZoneEditor
+    public static partial class ZoneEditor
     {
         private const double Scale = 1000000.0;
 
@@ -632,7 +632,7 @@ namespace LiraSlabZones.Core
             AnalysisSettings? settings = null, IList<Point3>? slab = null,
             IList<OpeningInfo>? openings = null)
         {
-            var platesById = plates.ToDictionary(plate => plate.Id);
+            var platesById = new IndexedPlates(plates);
             for (var pass = 0; pass < Math.Min(512, Math.Max(1, zones.Count * 2)); pass++)
             {
                 // Пробные сдвиги не меняют zones. Исходное покрытие зоны достаточно
@@ -1388,7 +1388,13 @@ namespace LiraSlabZones.Core
                         var replacementBounds = Bounds(copy.Contour);
                         var padding = UnitConversion.MmToMeters(Math.Max(
                             moving.BarStepMm, reference.BarStepMm));
-                        var losesNearbyCoverage = platesById.Values.Any(plate =>
+                        var changedBounds = (MinX: Math.Min(oldBounds.MinX, replacementBounds.MinX),
+                            MaxX: Math.Max(oldBounds.MaxX, replacementBounds.MaxX),
+                            MinY: Math.Min(oldBounds.MinY, replacementBounds.MinY),
+                            MaxY: Math.Max(oldBounds.MaxY, replacementBounds.MaxY));
+                        var oldCoverage = ZoneCoverageRules.Prepare(zones);
+                        var proposedCoverage = ZoneCoverageRules.Prepare(proposed);
+                        var losesNearbyCoverage = NearbyPlates(platesById, changedBounds, padding).Any(plate =>
                         {
                             if (!plate.Rebar.Ok ||
                                 plate.Rebar.Get(moving.Layer) - BackgroundAs(settings, moving.Layer) <=
@@ -1402,15 +1408,15 @@ namespace LiraSlabZones.Core
                                 return false;
                             var requiredAs = plate.Rebar.Get(moving.Layer) -
                                              BackgroundAs(settings, moving.Layer);
-                            return HasCoverage(zones, moving.Layer, plate, requiredAs, slab, openings) &&
-                                   !HasCoverage(proposed, moving.Layer, plate, requiredAs, slab, openings);
+                            return HasCoverage(oldCoverage, moving.Layer, plate, requiredAs, slab, openings) &&
+                                   !HasCoverage(proposedCoverage, moving.Layer, plate, requiredAs, slab, openings);
                         });
                         if (losesNearbyCoverage) continue;
 
                         SetContour(moving, copy.Contour.ToList());
                         moving.NodeIds = moving.NodeIds.Where(id =>
                                 platesById.TryGetValue(id, out var plate) && IntersectsBounds(moving, plate))
-                            .Concat(platesById.Values.Where(plate => plate.Rebar.Ok &&
+                            .Concat(NearbyPlates(platesById, Bounds(moving.Contour)).Where(plate => plate.Rebar.Ok &&
                                     plate.Rebar.Get(moving.Layer) - BackgroundAs(settings, moving.Layer) >
                                         MosaicBuilder.PositiveResidualToleranceCm2PerM &&
                                     moving.AsCoveredCm2PerM + 1e-6 >=
@@ -1560,9 +1566,9 @@ namespace LiraSlabZones.Core
                 if (!PreservesRequiredCoverage(copy, moving, zones, platesById,
                         settings, slab, openings, coverageTargets)) continue;
 
-                var proposedZones = zones.Where(zone => zone.Layer == moving.Layer &&
-                    !ReferenceEquals(zone, moving)).Concat(new[] { copy }).ToList();
-                var coverageValid = platesById.Values
+                var proposedZones = ZoneCoverageRules.Prepare(zones.Where(zone => zone.Layer == moving.Layer &&
+                    !ReferenceEquals(zone, moving)).Concat(new[] { copy }).ToList());
+                var coverageValid = NearbyPlates(platesById, Bounds(copy.Contour))
                     .Where(plate => plate.Rebar.Ok &&
                         plate.Rebar.Get(moving.Layer) - BackgroundAs(settings, moving.Layer) >
                             MosaicBuilder.PositiveResidualToleranceCm2PerM &&
@@ -1602,11 +1608,13 @@ namespace LiraSlabZones.Core
             var background = BackgroundAs(settings, original.Layer);
             if (coverageTargets == null || !coverageTargets.TryGetValue(original, out var targets))
             {
-                var nearbyPlates = platesById.Values.Where(plate => plate.Rebar.Ok &&
+                var originalIds = new HashSet<int>(original.NodeIds);
+                var nearbyPlates = NearbyPlates(platesById, Bounds(original.Contour), assigned: original.NodeIds).Where(plate => plate.Rebar.Ok &&
                     plate.Rebar.Get(original.Layer) - background > 0.01 &&
-                    (original.NodeIds.Contains(plate.Id) || IntersectsBounds(original, plate))).ToList();
+                    (originalIds.Contains(plate.Id) || IntersectsBounds(original, plate))).ToList();
+                var prepared = ZoneCoverageRules.Prepare(zones);
                 targets = nearbyPlates.Where(plate => ZoneCoverageRules.CoversOrBridgesGap(
-                    zones, plate, original.Layer,
+                    prepared, plate, original.Layer,
                     plate.Rebar.Get(original.Layer) - background, slabOutline, openings)).ToList();
                 if (coverageTargets != null) coverageTargets[original] = targets;
             }

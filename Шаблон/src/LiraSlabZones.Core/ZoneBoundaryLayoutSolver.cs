@@ -330,10 +330,14 @@ namespace LiraSlabZones.Core
             }
             bool Covers(IList<AdditionalZone> zones, Target t, bool overlap = false) => ZoneCoverageRules.CoversOrBridgesGap(
                 zones, t.Plate, t.Layer, t.Demand, frame.SlabOutline, null, overlap);
+            var prepared = ZoneCoverageRules.Prepare(plan.Zones);
+            var preparedCores = ZoneCoverageRules.Prepare(cores);
+            var preparedSafe = ZoneCoverageRules.Prepare(safe);
+            var preparedSafeCores = ZoneCoverageRules.Prepare(safeCores);
             var result = new Evaluation {
-                Covered = targets.Select(t => Covers(plan.Zones, t)).ToArray(),
-                Anchored = targets.Select(t => Covers(cores, t, true)).ToArray(),
-                Safe = targets.Select(t => Covers(safe, t) && Covers(safeCores, t, true)).ToArray(),
+                Covered = targets.Select(t => Covers(prepared, t)).ToArray(),
+                Anchored = targets.Select(t => Covers(preparedCores, t, true)).ToArray(),
+                Safe = targets.Select(t => Covers(preparedSafe, t) && Covers(preparedSafeCores, t, true)).ToArray(),
                 BadZones = plan.Zones.Count - safe.Count, Count = plan.Zones.Count
             };
             result.Conflicts = ConflictCount(plan.Zones, settings);
@@ -345,6 +349,8 @@ namespace LiraSlabZones.Core
             IList<OpeningInfo>? openings, ZoneBoundaryConstraints constraints, out string rejection)
         {
             rejection=string.Empty;
+            before = ZoneCoverageRules.Prepare(before);
+            after = ZoneCoverageRules.Prepare(after);
             foreach (var layer in before.Select(z => z.Layer).Distinct())
             {
                 var background = layer switch { RebarLayer.As1 => settings.AsMainAs1,

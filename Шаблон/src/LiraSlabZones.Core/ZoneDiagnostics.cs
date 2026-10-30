@@ -101,7 +101,7 @@ namespace LiraSlabZones.Core
             {
                 if (!LayerEnabled(layer, settings)) continue;
                 var background = Background(layer, settings);
-                var layerZones = byLayer.TryGetValue(layer, out var found) ? found : new List<AdditionalZone>();
+                var layerZones = ZoneCoverageRules.Prepare(byLayer.TryGetValue(layer, out var found) ? found : new List<AdditionalZone>());
                 foreach (var plate in plates.Where(p => p.Rebar.Ok &&
                     p.Rebar.Get(layer) - background > MosaicBuilder.PositiveResidualToleranceCm2PerM))
                 {
@@ -388,7 +388,7 @@ namespace LiraSlabZones.Core
           RebarLayer.As3 => s.AsMainAs3, RebarLayer.As4 => s.AsMainAs4, _ => 0 };
     }
 
-    public static class ZoneCoverageRules
+    public static partial class ZoneCoverageRules
     {
         private const double GeometryScale = 1000000.0;
         private const double OpeningCoverageAllowanceMm = 100;
@@ -442,11 +442,22 @@ namespace LiraSlabZones.Core
             AdditionalZone zone, LiraPlateElement plate, IList<Point3>? slabOutline = null)
         {
             if (zone?.Contour == null || zone.Contour.Count < 3 || plate == null) return false;
+            // Clipping cannot enlarge a valid FE polygon. Include the centroid and the
+            // point-fallback tolerance as well, so degenerate FE inputs keep their rules.
+            var zoneBounds = Bounds(zone);
+            var rawBounds = plate.Contour != null && plate.Contour.Count > 0
+                ? Bounds(plate.Contour)
+                : (MinX: plate.Centroid.X, MaxX: plate.Centroid.X,
+                   MinY: plate.Centroid.Y, MaxY: plate.Centroid.Y);
+            if (zoneBounds.MaxX < Math.Min(rawBounds.MinX, plate.Centroid.X) - 0.01 ||
+                zoneBounds.MinX > Math.Max(rawBounds.MaxX, plate.Centroid.X) + 0.01 ||
+                zoneBounds.MaxY < Math.Min(rawBounds.MinY, plate.Centroid.Y) - 0.01 ||
+                zoneBounds.MinY > Math.Max(rawBounds.MaxY, plate.Centroid.Y) + 0.01)
+                return false;
             var footprint = GetFootprint(plate, slabOutline);
             if (footprint.UsePointFallback) return DirectlyCovers(zone, plate.Centroid);
             if (!footprint.IsValid) return false;
 
-            var zoneBounds = Bounds(zone);
             if (zoneBounds.MaxX <= footprint.Bounds.MinX ||
                 zoneBounds.MinX >= footprint.Bounds.MaxX ||
                 zoneBounds.MaxY <= footprint.Bounds.MinY ||
@@ -554,7 +565,9 @@ namespace LiraSlabZones.Core
             double requiredAs, IList<Point3>? slabOutline, IList<OpeningInfo>? openings,
             bool allowOverlappingZones)
         {
-            var edgeCover=zones.Where(z=>z.Layer==layer).Select(z=>z.DesignEdgeCoverMm).DefaultIfEmpty(0).Max();
+            var prepared = zones as PreparedZones;
+            var edgeCover = prepared != null ? prepared.EdgeCover(layer) :
+                zones.Where(z=>z.Layer==layer).Select(z=>z.DesignEdgeCoverMm).DefaultIfEmpty(0).Max();
             var footprint = GetFootprint(plate, slabOutline,edgeCover);
             if(footprint.CoverOnly) return true;
             if (footprint.UsePointFallback)
@@ -562,12 +575,13 @@ namespace LiraSlabZones.Core
                     plate.Centroid, requiredAs);
             if (!footprint.IsValid) return false;
 
-            var eligible = zones.Where(zone => zone.Layer == layer &&
-                zone.AsCoveredCm2PerM + 1e-6 >= requiredAs && zone.Contour.Count >= 3).ToList();
-            var searchPadding = eligible.Count == 0
+            var eligible = prepared == null ? zones.Where(zone => zone.Layer == layer &&
+                zone.AsCoveredCm2PerM + 1e-6 >= requiredAs && zone.Contour.Count >= 3).ToList()
+                : null;
+            var searchPadding = prepared != null ? prepared.SearchPadding(layer, requiredAs) : eligible!.Count == 0
                 ? 0.05
-                : Math.Max(0.05, eligible.Max(zone => zone.BarStepMm) / 1000.0);
-            var nearby = eligible.Where(zone =>
+                : Math.Max(0.05, eligible!.Max(zone => zone.BarStepMm) / 1000.0);
+            var nearby = prepared != null ? prepared.Nearby(layer, requiredAs, footprint.Bounds, searchPadding) : eligible!.Where(zone =>
             {
                 var bounds = Bounds(zone);
                 return bounds.MaxX >= footprint.Bounds.MinX - searchPadding &&

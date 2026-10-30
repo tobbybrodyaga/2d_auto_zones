@@ -1471,18 +1471,20 @@ namespace LiraSlabZones.Core
             {
                 if (!LayerEnabled(layer, settings) || !zonesByLayer.TryGetValue(layer, out var layerZones)) continue;
                 var background = BackgroundAs(layer, settings);
+                var prepared = ZoneCoverageRules.Prepare(layerZones);
+                var assigned = layerZones.ToDictionary(zone => zone, zone => new HashSet<int>(zone.NodeIds));
                 foreach (var plate in plates)
                 {
                     if (!plate.Rebar.Ok) continue;
                     var required = plate.Rebar.Get(layer) - background;
                     if (required <= MosaicBuilder.PositiveResidualToleranceCm2PerM ||
                         !ZoneCoverageRules.CoversOrBridgesGap(
-                            layerZones, plate, layer, required, slabOutline, openings))
+                            prepared, plate, layer, required, slabOutline, openings))
                         continue;
 
                     var candidates = layerZones.Where(zone =>
                         CapacityOf(zone) + CoverageTolerance >= required &&
-                        (zone.NodeIds.Contains(plate.Id) || IntersectsFootprint(zone, plate))).ToList();
+                        (assigned[zone].Contains(plate.Id) || IntersectsFootprint(zone, plate))).ToList();
                     var directWitness = candidates
                         .Where(zone => ZoneCoverageRules.CoversOrBridgesGap(
                             new List<AdditionalZone> { zone }, plate, layer, required, slabOutline, openings))
@@ -1619,7 +1621,7 @@ namespace LiraSlabZones.Core
         {
             var expected = new List<(LiraPlateElement, RebarLayer, double)>();
             if (!LayerEnabled(layer, settings)) return expected;
-            var layerZones = zones.Where(zone => zone.Layer == layer).ToList();
+            var layerZones = ZoneCoverageRules.Prepare(zones.Where(zone => zone.Layer == layer).ToList());
             var background = BackgroundAs(layer, settings);
             foreach (var plate in plates)
             {
@@ -1640,7 +1642,7 @@ namespace LiraSlabZones.Core
             IList<OpeningInfo>? openings)
         {
             var zonesByLayer = zones.GroupBy(zone => zone.Layer)
-                .ToDictionary(group => group.Key, group => (IList<AdditionalZone>)group.ToList());
+                .ToDictionary(group => group.Key, group => ZoneCoverageRules.Prepare(group.ToList()));
             return expected.All(item => zonesByLayer.TryGetValue(item.Layer, out var layerZones) &&
                 ZoneCoverageRules.CoversOrBridgesGap(
                     layerZones, item.Plate, item.Layer, item.RequiredAs, slabOutline, openings));
