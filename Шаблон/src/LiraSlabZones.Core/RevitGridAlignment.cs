@@ -255,7 +255,7 @@ namespace LiraSlabZones.Core
 
         private static double Frac(double mm) => mm - StepMm * Math.Round(mm / StepMm, MidpointRounding.AwayFromZero);
 
-        private static void FillTie(AdditionalZone zone, IList<AlignAxis> axes)
+        internal static void FillTie(AdditionalZone zone, IList<AlignAxis> axes)
         {
             if (!TryBounds(zone, out var b)) return;
             var parts = new List<string>();

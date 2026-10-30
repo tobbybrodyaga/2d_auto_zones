@@ -181,6 +181,14 @@ namespace LiraSlabZones.Core
         public int SplicePartIndex { get; set; }
         public int SplicePartCount { get; set; }
 
+        /// <summary>Исходный диапазон центров объединённых рядов и маркер их текущего положения.</summary>
+        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore)]
+        public double? RowMergeCenterMinM { get; set; }
+        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore)]
+        public double? RowMergeCenterMaxM { get; set; }
+        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore)]
+        public double? RowMergeCenterM { get; set; }
+
         /// <summary>Привязка к ближайшей вертикальной оси (имя).</summary>
         public string AxisNameX { get; set; } = string.Empty;
         /// <summary>Положение вертикальной оси привязки, м.</summary>

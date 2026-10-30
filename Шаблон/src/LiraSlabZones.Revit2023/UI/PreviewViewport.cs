@@ -1600,6 +1600,8 @@ namespace LiraSlabZones.Revit2023.UI
                     _settings, _result.Outline, _result.Openings, boundaryConstraints, revitAxes, LayoutProgress);
                 ZoneLayoutCompactness.Refine(_patchCandidateZones, _result.Plates, _settings,
                     _result.Outline, _result.Openings, boundaryConstraints, LayoutProgress);
+                ZoneLayoutCompactness.MergeNearbyRows(_patchCandidateZones, _result.Plates, _settings,
+                    _result.Outline, _result.Openings, boundaryConstraints, LayoutProgress, revitAxes);
             }
             LayoutProgress?.Invoke("Подготовка изображения и диагностики", 0, 0);
             AssignZoneIds(_patchCandidateZones);

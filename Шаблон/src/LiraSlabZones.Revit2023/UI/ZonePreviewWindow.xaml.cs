@@ -9,6 +9,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Threading;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using LiraSlabZones.Core;
 using Microsoft.Win32;
@@ -549,6 +550,9 @@ namespace LiraSlabZones.Revit2023.UI
         private async void BtnRebuild_Click(object sender, RoutedEventArgs e) =>
             await RebuildZonesPreservingViewAsync(fromUi: true);
 
+        private async void BtnMergeSimilar_Click(object sender, RoutedEventArgs e) =>
+            await UpdateZonesPreservingViewAsync(fromUi: false, mergeOnly: true);
+
         private async void BtnBoundaryEditor_Click(object sender, RoutedEventArgs e)
         {
             if (_result == null || _result.Plates.Count == 0) return;
@@ -731,21 +735,30 @@ namespace LiraSlabZones.Revit2023.UI
             return rebuilt;
         }
 
-        private async Task RebuildZonesPreservingViewAsync(bool fromUi)
+        private Task RebuildZonesPreservingViewAsync(bool fromUi) =>
+            UpdateZonesPreservingViewAsync(fromUi, mergeOnly: false);
+
+        private async Task UpdateZonesPreservingViewAsync(bool fromUi, bool mergeOnly)
         {
             if (_result == null || _busy || _closed) return;
+            // Не теряем настройки, которые пользователь изменил перед нажатием кнопки.
+            if (mergeOnly && _rebuildTimer.IsEnabled) { mergeOnly = false; fromUi = true; }
             var source = _result;
+            if (mergeOnly && (Viewport.PlacementZones.Count < 2 || string.IsNullOrWhiteSpace(source.Settings.ConcreteClass)))
+            { Log("Для объединения нужны рассчитанные зоны и выбранный класс бетона", "warn"); return; }
             var settings = fromUi ? ReadSettingsFromUi() : source.Settings;
             var previousSettings = JObject.FromObject(source.Settings);
-            var previous = source.PatchPreviewOnly ? new ZoneBoundaryConstraints(source.Outline, source.Openings,
+            var previous = source.PatchPreviewOnly || mergeOnly ? new ZoneBoundaryConstraints(source.Outline, source.Openings,
                 settings.EdgeOffsetMm).Snapshot(Viewport.PlacementZones) : null;
+            var operation = mergeOnly ? "Объединение" : "Пересчёт";
             var fallback = _plates;
             _busy = true;
             _rebuildTimer.Stop();
             SettingsScroll.IsEnabled = InfoPanel.IsEnabled = CanvasTools.IsEnabled = false;
             Viewport.IsHitTestVisible = false;
             RebuildProgressPanel.Visibility = Visibility.Visible;
-            TxtRebuildStage.Text = "КЭ, мозаика и расчётные пятна…";
+            TxtRebuildTitle.Text = operation + " зон";
+            TxtRebuildStage.Text = mergeOnly ? "Подготовка готовой раскладки…" : "КЭ, мозаика и расчётные пятна…";
             var watch = Stopwatch.StartNew();
             TxtRebuildElapsed.Text = "Прошло 0 с";
             _progressTimer = new DispatcherTimer { Interval=TimeSpan.FromMilliseconds(200) };
@@ -753,11 +766,6 @@ namespace LiraSlabZones.Revit2023.UI
             _progressTimer.Start();
             try
             {
-                var rebuilt = await Task.Run(() => RecalculateData(source, settings, fallback));
-                if (_closed) return;
-                rebuilt.RevitLink = _revitLink?.Matches(rebuilt.ElevationZM) == true ? _revitLink : null;
-                var reference = previous != null && Math.Abs(source.ElevationZM-rebuilt.ElevationZM)<0.001 &&
-                    SameCoverageInputs(previousSettings,JObject.FromObject(settings)) ? previous : null;
                 Action<string,int,int> progress = (stage, done, total) =>
                 {
                     if (_closed) throw new OperationCanceledException();
@@ -767,14 +775,30 @@ namespace LiraSlabZones.Revit2023.UI
                         if (!_closed && _busy) TxtRebuildStage.Text = total>0 ? $"{stage}: {done} из {total}" : stage+"…";
                     }),DispatcherPriority.Background);
                 };
+                var mergedCount = 0;
+                var rebuilt = await Task.Run(() =>
+                {
+                    if (!mergeOnly) return RecalculateData(source, settings, fallback);
+                    var copy = JsonConvert.DeserializeObject<AnalysisResult>(JsonConvert.SerializeObject(source))!;
+                    copy.Zones = previous!.ToList();
+                    var constraints = new ZoneBoundaryConstraints(copy.Outline, copy.Openings, settings.EdgeOffsetMm);
+                    mergedCount = ZoneLayoutCompactness.MergeNearbyRows(copy.Zones, copy.Plates, settings,
+                        copy.Outline, copy.Openings, constraints, progress, RevitGridAlignment.AxesInLira(copy, settings));
+                    return copy;
+                });
+                if (_closed) return;
+                rebuilt.RevitLink = _revitLink?.Matches(rebuilt.ElevationZM) == true ? _revitLink : null;
+                var reference = previous != null && Math.Abs(source.ElevationZM-rebuilt.ElevationZM)<0.001 &&
+                    SameCoverageInputs(previousSettings,JObject.FromObject(settings)) ? previous : null;
                 var prepared = await PreviewViewport.PrepareLayoutAsync(rebuilt,settings,reference,progress);
                 if (_closed) return;
                 CompleteRebuild(rebuilt,settings,null,prepared);
-                Log($"Пересчёт завершён за {watch.Elapsed.TotalSeconds:0.#} с; зон {rebuilt.Zones.Count}", "ok");
+                Log($"{operation}: готово за {watch.Elapsed.TotalSeconds:0.#} с; зон {rebuilt.Zones.Count}" +
+                    (mergeOnly ? $"; объединений {mergedCount}" : ""), "ok");
             }
             catch(Exception ex)
             {
-                if (!_closed) {Log("Ошибка пересчёта: "+ex.Message,"error");TxtStatus.Text="Пересчёт не завершён: "+ex.Message;}
+                if (!_closed) {Log($"{operation}: ошибка — "+ex.Message,"error");TxtStatus.Text=operation+": "+ex.Message;}
             }
             finally
             {

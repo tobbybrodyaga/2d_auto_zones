@@ -6,7 +6,7 @@ using Newtonsoft.Json;
 namespace LiraSlabZones.Core
 {
     /// <summary>Убирает пустые продольные пробеги и объединяет непрерывные одинаковые ряды.</summary>
-    public static class ZoneLayoutCompactness
+    public static partial class ZoneLayoutCompactness
     {
         private const double Eps = 0.000002;
 

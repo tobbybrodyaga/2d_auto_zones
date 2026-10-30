@@ -5,6 +5,7 @@ param(
     [string]$OutputJson='',
     [string]$ScreenshotPath='',
     [switch]$Synchronous,
+    [switch]$MergeOnly,
     [switch]$RequireClean,
     [int]$TimeoutSeconds=900
 )
@@ -61,7 +62,8 @@ try {
     if($Synchronous){$null=$type.GetMethod('RebuildZonesPreservingView',$flags).Invoke($window,@($true))}
     else {
         $timer.Start()
-        $task=$type.GetMethod('RebuildZonesPreservingViewAsync',$flags).Invoke($window,@($true))
+        if($MergeOnly){$task=$type.GetMethod('UpdateZonesPreservingViewAsync',$flags).Invoke($window,@($false,$true))}
+        else {$task=$type.GetMethod('RebuildZonesPreservingViewAsync',$flags).Invoke($window,@($true))}
         if($window.FindName('RebuildProgressPanel').Visibility -ne 'Visible'){throw 'No visible recalculation progress'}
         if($window.FindName('SettingsScroll').IsEnabled){throw 'Settings may race the active calculation'}
         while(!$task.IsCompleted){

@@ -62,6 +62,60 @@ public static class ZoneCompactnessRegression
             Assert(zones[0].Rebar.Get(zones[0].Layer)==6,"Merged row reinforcement metadata does not match its governing demand");
             var other=Zone(y,2,7,3.8);other.DiameterMm=10;zones.Add(other);
             Assert(ZoneLayoutCompactness.MergeRows(zones,cfg,constraints)==0,"Different diameters were joined");
+            // Small axial offsets must not leave a picket fence of identical bars.
+            zones=new List<AdditionalZone>{Zone(y,2,7,2),Zone(y,2.02,7.02,2.6),Zone(y,2.03,7.03,3.2)};
+            plates.Clear();
+            foreach(var cross in new[]{2.1,2.7,3.3}) plates.Add(Demand(y,plates.Count+1,3,4,cross,cross+0.1,cfg));
+            raw=JsonConvert.SerializeObject(plates);
+            Assert(ZoneLayoutCompactness.MergeNearbyRows(zones,plates,cfg,outline,null,constraints)==2 && zones.Count==1,
+                "Nearby equal rows were not aligned and merged");
+            Assert(zones[0].BarCount==9 && Math.Abs(zones[0].LengthMm-5000)<0.001 && zones[0].BarStepMm==200,
+                "Nearby merge changed length, step or total bar count");
+            Assert(raw==JsonConvert.SerializeObject(plates),"Nearby merge changed FE demand");
+            Assert(ZoneLayoutCompactness.MergeNearbyRows(zones,plates,cfg,outline,null,constraints)==0,"Nearby merge is not stable");
+            // Coverage alone allows this move, but the two opposite ends require all their anchorage.
+            zones=new List<AdditionalZone>{Zone(y,2,7,2),Zone(y,2.02,7.02,2.6)};
+            plates=new List<LiraPlateElement>{Demand(y,1,2+anchor,2+anchor+0.1,2.1,2.2,cfg),
+                Demand(y,2,7.02-anchor-0.1,7.02-anchor,2.7,2.8,cfg)};
+            stable=JsonConvert.SerializeObject(zones);
+            Assert(ZoneLayoutCompactness.MergeNearbyRows(zones,plates,cfg,outline,null,constraints)==0 &&
+                stable==JsonConvert.SerializeObject(zones),"Alignment shortened a required anchorage end");
+            // A hole may lie entirely in the old inter-row gap, but inside the merged rectangle.
+            zones=new List<AdditionalZone>{Zone(y,2,7,2),Zone(y,2.02,7.02,2.6)};
+            plates=new List<LiraPlateElement>{Demand(y,1,3,4,2.1,2.2,cfg),Demand(y,2,3,4,2.7,2.8,cfg)};
+            var hole=y?new OpeningInfo{MinXM=2.45,MaxXM=2.55,MinYM=4.5,MaxYM=4.6}:
+                new OpeningInfo{MinXM=4.5,MaxXM=4.6,MinYM=2.45,MaxYM=2.55};
+            var openings=new List<OpeningInfo>{hole};
+            Assert(ZoneLayoutCompactness.MergeNearbyRows(zones,plates,cfg,outline,openings,
+                new ZoneBoundaryConstraints(outline,openings,50))==0,"Merged across an opening");
+            // Every candidate alignment would hit one of the fixed end neighbours.
+            zones=new List<AdditionalZone>{Zone(y,2,7,2),Zone(y,2.04,7.04,2.6),
+                Zone(y,7.001,8.001,2),Zone(y,1.039,2.039,2.6)};
+            Assert(ZoneLayoutCompactness.MergeNearbyRows(zones,plates,cfg,outline,null,constraints)==0,
+                "Alignment created a collision with a fixed neighbour");
+            zones=new List<AdditionalZone>{Zone(y,2,7,2),Zone(y,2.051,7.051,2.6)};
+            Assert(ZoneLayoutCompactness.MergeNearbyRows(zones,plates,cfg,outline,null,constraints)==0,"Exceeded the 50mm alignment tolerance");
+            zones=new List<AdditionalZone>{Zone(y,2,7,2),Zone(y,2.04,7.04,2.6),Zone(y,2.08,7.08,3.2)};
+            Assert(ZoneLayoutCompactness.MergeNearbyRows(zones,plates,cfg,outline,null,constraints)==1 && zones.Count==2,
+                "Pairwise merging accumulated excessive alignment drift along a chain");
+            zones=JsonConvert.DeserializeObject<List<AdditionalZone>>(JsonConvert.SerializeObject(zones));
+            Assert(ZoneLayoutCompactness.MergeNearbyRows(zones,plates,cfg,outline,null,constraints)==0,
+                "Repeated merging after JSON reload bypassed the original alignment tolerance");
+            zones=new List<AdditionalZone>{Zone(y,2,7,2),Zone(y,2.02,7.02,2.6)};
+            zones[0].SpliceGroupId="chain";zones[0].SplicePartCount=2;
+            Assert(ZoneLayoutCompactness.MergeNearbyRows(zones,plates,cfg,outline,null,constraints)==0,"A planned splice chain was torn apart");
+            zones=new List<AdditionalZone>{Zone(y,2,7,2),Zone(y,2.02,7.02,2.6)};
+            zones[1].DiameterMm=10;
+            Assert(ZoneLayoutCompactness.MergeNearbyRows(zones,plates,cfg,outline,null,constraints)==0,"Nearby rows of different diameter merged");
+            zones[1].DiameterMm=8;zones[1].LengthMm+=5;
+            Assert(ZoneLayoutCompactness.MergeNearbyRows(zones,plates,cfg,outline,null,constraints)==0,"Nearby rows of different stock length merged");
+            zones=new List<AdditionalZone>{Zone(y,2.003,7.003,2.003),Zone(y,2.023,7.023,2.603)};
+            var axes=new List<AlignAxis>{new AlignAxis{Name="1",Vertical=true,X1=0.003,X2=0.003,Y2=20},
+                new AlignAxis{Name="A",Vertical=false,Y1=0.003,Y2=0.003,X2=20}};
+            Assert(ZoneLayoutCompactness.MergeNearbyRows(zones,plates,cfg,outline,null,constraints,null,axes)==1,
+                "Nearby tied rows could not be merged on the 10mm axis grid");
+            Assert(RevitGridAlignment.Check(zones,axes,outline,null,50).Count==0 && zones[0].AxisTieLabel.Length>0,
+                "Nearby merge broke axis ties or left stale tie metadata");
             var wide=Zone(y,2,8,2);
             wide.Contour=y?Rect(2,6,2,8):Rect(2,8,2,6);
             wide.WidthM=4;wide.WidthMm=4000;wide.BarStepMm=100;wide.BarCount=41;wide.DiameterMm=16;
@@ -81,5 +135,9 @@ public static class ZoneCompactnessRegression
                 "Local capacity partition lost an FE footprint");
         }
         Console.WriteLine("PASS compactness X/Y: separated axial demand, table anchorage, exact bar counts, equal-row merge, no mutation, idempotence");
+        Console.WriteLine("PASS nearby X/Y: bounded alignment, exact stock/step/count, anchorage, holes, fixed neighbours and planned splice protection");
     }
+    private static LiraPlateElement Demand(bool y,int id,double from,double to,double low,double high,AnalysisSettings cfg)
+    {return new LiraPlateElement {Id=id,Contour=y?Rect(low,high,from,to):Rect(from,to,low,high),
+        Rebar=new PlateReinforcement {Ok=true,As1=cfg.AsMainAs1+2,As2=cfg.AsMainAs2+2}};}
 }

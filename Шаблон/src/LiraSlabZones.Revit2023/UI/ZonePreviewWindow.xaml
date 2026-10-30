@@ -302,6 +302,9 @@
               <TextBlock x:Name="TxtBoundaryRulesToggle" Text="Учитывать границу и отверстия" TextWrapping="Wrap"/>
             </ToggleButton>
             <Button Content="Пересчитать пятна" Style="{StaticResource PrimaryBtn}" Click="BtnRebuild_Click"/>
+            <Button x:Name="BtnMergeSimilar" Content="Объединить похожие зоны" Style="{StaticResource SecondaryBtn}"
+                    Click="BtnMergeSimilar_Click"
+                    ToolTip="Без полного пересчёта: одинаковые Ø, длина и шаг; смещение вдоль стержней до 50 мм"/>
             <Button x:Name="BtnSaveJson" Content="Сохранить JSON зон…" Style="{StaticResource SecondaryBtn}" Click="BtnSaveJson_Click"/>
             <Button Content="Сохранить JSON всех плит…" Style="{StaticResource SecondaryBtn}" Click="BtnSaveAllPlatesJson_Click"/>
             <Button x:Name="BtnPlace" Content="Разместить в Revit" Style="{StaticResource PrimaryBtn}" Click="BtnPlace_Click" IsEnabled="False"/>
@@ -368,7 +371,7 @@
                 VerticalAlignment="Top" Margin="18" Padding="16" Background="#F5F9FF" BorderBrush="#93B4F5"
                 BorderThickness="1" CornerRadius="6" IsHitTestVisible="False">
           <StackPanel>
-            <TextBlock Text="Пересчёт зон" FontSize="16" FontWeight="SemiBold" Foreground="#1D4ED8"/>
+            <TextBlock x:Name="TxtRebuildTitle" Text="Пересчёт зон" FontSize="16" FontWeight="SemiBold" Foreground="#1D4ED8"/>
             <TextBlock x:Name="TxtRebuildStage" Text="Подготовка данных…" TextWrapping="Wrap" Margin="0,6,0,3"/>
             <ProgressBar x:Name="RebuildProgressBar" Height="6" IsIndeterminate="True" Margin="0,6"/>
             <TextBlock x:Name="TxtRebuildElapsed" Text="Прошло 0 с" FontSize="11" Foreground="#64748B"/>
